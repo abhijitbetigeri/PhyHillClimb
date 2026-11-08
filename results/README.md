@@ -55,3 +55,26 @@ Tooling: `tools/dream_single_arm_finetune.py` (register, validate, upload, queue
 5. The model only commits from the trained scene: all cables seated, no loose cables, no cubes near the strip, nobody in view, the park pose not drifted.
 6. Dream's session drops after ~10 s without observations (during a long pull): reset the episode and carry on.
 7. Server latency decides the day: at 0.45 s round trips the loop works; at 1–3 s the model crawls.
+
+## Datasets
+
+Training data for the fine-tunes was recorded by the team on the station with a leader–follower rig (LeRobot v2.1,
+7-wide state/action, cameras `observation.images.scene` and `observation.images.wrist`) and uploaded to Dream Labs.
+Mirrors on Hugging Face:
+
+| Repo | Episodes | Used in |
+|---|---|---|
+| https://huggingface.co/datasets/dlqkstjr10/metal-right-arm-multitask-20261107 (teammate, public) | 30 right-arm: unplug, stack, insert | right-arm-v1, right-arm-v1-plus500 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-unplug-right-20261107 | 10 | right-unplug-v1 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-stack-right-20261107 | 10 | right-arm-v1 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-insert-right-20261107 | 10 | right-arm-v1 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-stack-left-20261107 | 10 | left-arm-v1 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-insert-left-20261107 | 2 | left-arm-v1 |
+| https://huggingface.co/datasets/abhijitbetigeri/nuck4-stack-20261107 | 3 | – |
+
+The simulation lab's sources and cached environment for Hugging Face Jobs: https://huggingface.co/datasets/abhijitbetigeri/phyhillclimb-sim.
+
+## 60-second demo video
+
+`videos/phyhillclimb_60s.mp4`: 12 s time-lapse of a real-arm run (3 of 4 plugs, station overhead camera), 24 s cable
+unplug in simulation, 24 s three-cube tower in simulation.
