@@ -7,23 +7,49 @@ builds the stack; the **Relay Director** sequences the stages, verifies each pas
 to call stop. `AGENTS.md` is the full brief (rubric, strategy, station facts); this file is the map and the
 instructions.
 
+## Submission summary (Sunday 8 November, 15:00)
+
+What works, and where it was verified:
+
+| Result | Where | Measured |
+|---|---|---|
+| Unplug a USB cable with the real right Metal arm: Dream-1 fine-tune reaches the plug, the runner's assist closes, raises the hold torque and pulls | station NUCK-4, `tools/dream_right_arm_run.py` | 5 of 5 releases in a row, about 35 s each |
+| Three-cube tower in the ordered task, planner program found by Autoresearch search | MuJoCo Metal bench, `sim/candidates/tower_order_v24.py` | 5/5 seeded dev trials, 9/10 held-out, 90–97 s, strict 3 s stability judge |
+| Unplug both plugs from the hub, planner program | MuJoCo cable bench, `sim/candidates/cable_v1.py` | 5/5 dev, 10/10 held-out, 36–38 s for both plugs |
+| Real station live in a LiveKit room: cameras, joint state, runner status, team dashboard | LiveKit Cloud room `relay-nuck4`, `relay/station_bridge.py`, `web/viewer.html` | 29 synchronized observations/s, three tracks, status RPC |
+| Relay Director as a LiveKit Portal operator with a Dream-1 skill | `relay/director.py`, `relay/skills/dream.py` | passes Dream's loop check through the cloud room |
+
+Not solved: stacking on the real arm (the fine-tune reaches a cube but never closes; 10 demos), the stick in the
+top cube (the carry fails in the simulator), transfer of the tower program to the real arm (runbook in `real/`,
+measured-scene mode scored 1/5 in simulation). Everything in this table has a log in the repo or a command below
+that reproduces it; nothing here is a projection.
+
+Dream-1 fine-tunes (Dream Labs API, single right arm, 7-wide state): `dream-1-ft:2d43713b-right-arm-v1` (30 episodes:
+unplug, stack, insert), `-right-arm-v1-plus500` (continued 500 steps, the match model), `-right-unplug-v1` (unplug only),
+`-left-arm-v1` and `-left-arm-v1-plus500` (12 left-arm episodes). Built with `tools/dream_single_arm_finetune.py`.
+
+Stack: Dream Labs Dream-1 (policy and fine-tuning), LiveKit Cloud + LiveKit Portal (transport, dashboard),
+Dimensional dimos (Autoresearch lab, planner, MuJoCo Metal), MakerMods Metal arms, Hugging Face Jobs (simulation
+compute). Disclosure: the Dream harness skeleton in `harness/` predates the event; everything else was built during
+the hackathon. How LiveKit was used: see the section below.
+
 ## What is where
 
 | Folder | What it is | Status |
 |---|---|---|
 | `AGENTS.md` | The team brief: rubric, scoring strategy, station, Dream kit, dimos, LiveKit, timeline, safety rules | read first |
 | `harness/` | Dream-1 control loop: observation encoding, 48-row action chunks played by time, refill, recovery, stopping rule | passes `dream.check_loop` offline |
-| `relay/` | LiveKit Portal room as the hardware abstraction: a robot process (fake backend or the station), the Relay Director as the operator, a Dream skill | local and cloud room verified end to end |
+| `relay/` | LiveKit Portal room as the hardware abstraction: a robot process (fake backend or the station bridge), the Relay Director as the operator, a Dream skill, a room peek tool | local and cloud room verified end to end; the real station publishes through `station_bridge.py` |
 | `web/viewer.html` | Team dashboard: every camera track plus the Director's live score and advice | works in Chrome and Safari |
-| `sim/` | dimos Autoresearch labs on a MuJoCo bench with the three foam cubes; candidate programs; judges | tower program 5/5 dev, 9/10 held-out |
+| `sim/` | dimos Autoresearch labs on a MuJoCo bench: the three foam cubes (`stack_bench.xml`, `lab_stack.py`) and the stage 1 cable set, a USB hub with plugs standing in its sockets (`cable_bench.xml`, `lab_cable.py`); candidate programs; judges | tower program 5/5 dev, 9/10 held-out; unplug program `cable_v1` 5/5 dev, 10/10 held-out, 36 s for both plugs |
 | `hfjobs/` | Runs the simulation lab on Hugging Face Jobs instead of a laptop | working, see its README |
 | `notes/`, `runs/`, `videos/`, `.env*` | internal notes, run logs, station videos, credentials | gitignored |
 
 ## Results so far (simulation, Saturday evening)
 
 The stacking skill is a program against the dimos arm API, found by writing a candidate, running it on seeded
-trials, reading the traces and keyframes, and fixing the measured cause. Every fix is a property of the real
-arm, not a simulation trick, so the program should transfer.
+trials, reading the traces and keyframes, and fixing the measured cause. These are simulation measurements; hardware transfer has not been established.
+The rates below are historical geometry-only scores, not results from the current release/stability verifier.
 
 | Program | Task | Seeded dev trials | Held-out trials | Time per pass |
 |---|---|---|---|---|
@@ -112,6 +138,36 @@ dreamcli robot run --task "unplug the usb cable" --checkpoint dream-1-ft:<acct>-
 
 Fine-tuning data comes only from the kit's collector on the station: public datasets exist for other arms, but
 Dream-1's Metal embodiment needs this station's cameras and joint layout. Aim for 50 varied unplug episodes.
+
+## How we used LiveKit
+
+The LiveKit room is the hardware abstraction of the whole entry: one wire format for the fake robot, the simulator
+and the real Metal station, and one place where the policy, the dashboard and the team meet. Built on
+**LiveKit Portal** (the robotics transport behind [portal-makermods](https://github.com/livekit-examples/portal-makermods))
+on a LiveKit Cloud project, with the hackathon credits.
+
+| Piece | LiveKit feature | File | Verified |
+|---|---|---|---|
+| Station publisher | Portal **robot**: three VP8 camera tracks + the 14-value joint state at 30 Hz, `status` RPC | `relay/station_bridge.py` + `tools/relay_tap.py` (hooked into the arm runner with `--relay`) | local room: 28.8 synchronized observations/s, 3 tracks decoded, RPC answered; cloud room `relay-nuck4` from the station |
+| Relay Director | Portal **operator**: claims control, synchronized observations, actions, publishes `status` over RPC | `relay/director.py` | 108 observations and 177 actions in 25 s against the fake robot |
+| Dream-1 skill | the official Portal control loop ported behind the Director's `Skill` interface | `relay/skills/dream.py` | passes Dream's `check_loop` through the cloud room (hold, parts, play rate, circle) |
+| Fake robot | Portal robot with synthetic cameras and a tracking arm, for development without hardware | `relay/robot_sim.py` | end to end with the Director |
+| Dashboard | browser client (`livekit-client`), subscribes to every track, calls the `status` RPC each second | `web/viewer.html` | Chrome and Safari; teammates' phones on the venue Wi-Fi |
+| Room peek | Portal operator that reports rates, track sizes, state and status; sends nothing | `relay/peek.py` | used for every check above |
+
+What it bought us:
+
+- **Policy and hardware decoupled.** The Director was written and tested against the fake robot on a laptop, then
+  pointed at the station with no code change: same tracks, same state names, same RPC.
+- **Safety by construction.** The station bridge is publish-only and runs in its own venv and process. If it dies
+  the arm runner never notices; actions from the room are counted and ignored, the runner keeps the motors.
+- **Everyone sees the same thing.** Judges and teammates open one page: live cameras, the arm state, the runner's
+  phase (model / assist), the Dream round trip, points, clock and the "CALL STOP NOW" advice, all from the room.
+- **Measured, not assumed.** Cloud hop adds 0.46 s to the control loop (`relay/README.md`), so the match plan is a
+  local `livekit-server --dev` on the venue LAN for control and the cloud room for viewers.
+
+Codec lesson: browsers could not decode Portal's H.264 tracks, so `relay/portal.yaml` publishes VP8, which
+Chrome, Safari and the Python subscribers all decode.
 
 ## Rules for everyone
 

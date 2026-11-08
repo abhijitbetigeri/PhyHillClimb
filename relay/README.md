@@ -29,6 +29,24 @@ Next: a Dream-1 `Skill` (the loop in `harness/dream_harness.py` fed from `obs.fr
 - Viewer links for teammates are minted with `lk token create --join --room relay-nuck4 --identity viewer-N
   --valid-for 48h` and kept in `notes/relay-links.md` (gitignored).
 
+## The real station in the room (relay/station_bridge.py + tools/relay_tap.py, 2026-11-08)
+
+The arm runner on the station (`tools/dream_right_arm_run.py`, the teammates' Dream environment, no LiveKit in it)
+gets a `--relay` flag: a `RelayTap` thread writes the newest camera frames (JPEG 640x360) plus `state.json` (the
+14 portal.yaml values and the runner's status: mode, phase model/assist, task, elapsed, Dream round trip, cables
+unplugged, cubes placed, last event) to `/dev/shm/phyhill-relay` at 15 Hz. `publish()` never blocks or raises.
+
+`python -m relay.station_bridge --room relay-nuck4` (own venv `~/relay-env`, own process, tmux session `relay`)
+reads that folder and publishes it as the Portal **robot**: VP8 tracks `overhead_camera`, `left_wrist_camera`
+(a placeholder in single-arm runs), `right_wrist_camera` and the state at 30 Hz, and answers the `status` RPC in
+the Director's vocabulary, so `web/viewer.html` shows the real arm with no change. The bridge is publish-only:
+operator actions are counted and ignored. On the station only a pre-minted robot token lives in
+`~/PhyHillClimb-relay/.env.local` (`LIVEKIT_ROBOT_TOKEN`), never the API secret.
+
+Checked on the Mac with `livekit-server --dev`: `python tools/relay_tap.py --demo` + the bridge + `python -m relay.peek`
+= 28.8 observations/s, three tracks decoded, state and status RPC correct. `tools/apply_relay_hook.py` applies the
+runner hook to a teammate's copy of the runner (anchored edits; the station's two variants both took it).
+
 ## Dream-1 skill (relay/skills/dream.py)
 
 `python -m relay.director --skill dream [--checkpoint dream-1-ft:...] [--dry-run]` runs Dream-1 through the room:

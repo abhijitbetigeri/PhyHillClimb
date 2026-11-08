@@ -23,6 +23,12 @@
   .cam video { width: 100%; height: 100%; object-fit: contain; display: block; }
   .cam .name { position: absolute; left: 8px; bottom: 6px; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
   #log { color: var(--muted); font-size: 12px; white-space: pre-wrap; margin-top: 12px; }
+  #livekit { border: 1px solid var(--line); border-radius: 6px; padding: 10px 12px; margin-top: 12px; }
+  #livekit h2 { font-size: 14px; margin: 0 0 8px; color: var(--accent); }
+  #livekit .row { display: flex; gap: 12px; font-variant-numeric: tabular-nums; }
+  #livekit .row .k { color: var(--muted); min-width: 190px; }
+  #livekit p { color: var(--muted); margin: 8px 0 0; }
+  #livekit code { color: var(--fg); }
   form[hidden] { display: none; }
   form { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
   input { flex: 1 1 240px; background: #161b23; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
@@ -48,6 +54,18 @@
   <div class="tile big"><div class="k">Director advice</div><div class="v" id="s-advice">waiting for the director</div></div>
 </section>
 <section id="videos"></section>
+<section id="livekit">
+  <h2>How this page uses LiveKit</h2>
+  <div class="row"><span class="k">Room participants</span><span id="lk-participants">–</span></div>
+  <div class="row"><span class="k">Video tracks subscribed</span><span id="lk-tracks">0</span></div>
+  <div class="row"><span class="k">Status via RPC from</span><span id="lk-source">–</span></div>
+  <div class="row"><span class="k">Arm runner</span><span id="lk-runner">–</span></div>
+  <p>The station publishes its three cameras as VP8 tracks and the 14 joint values as a data stream through
+  <b>LiveKit Portal</b> (identity <code>robot</code>). The <b>Relay Director</b> joins as a Portal operator, claims
+  control, reads synchronized observations and sends actions; this page and every teammate's phone join as
+  observers and call the <code>status</code> RPC once a second for the score, the clock and the "call stop" advice.
+  One room, one wire format, for the fake robot, the simulator and the real Metal arms.</p>
+</section>
 <div id="log"></div>
 
 <script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.js"></script>
@@ -80,16 +98,27 @@
   }
 
   async function pollStatus(room) {
-    const director = [...room.remoteParticipants.values()].find((p) => p.identity === "director");
-    if (!director) { $("s-advice").textContent = "no director in the room"; return; }
+    // The Director answers `status` when it runs the relay; otherwise the station bridge (identity "robot")
+    // answers with the arm runner's own status, so the dashboard works for both.
+    const ids = [...room.remoteParticipants.values()].map((p) => p.identity);
+    const source = ids.includes("director") ? "director" : ids.includes("robot") ? "robot" : null;
+    $("lk-participants").textContent = ids.length ? ids.join(", ") : "–";
+    $("lk-tracks").textContent = videos.size;
+    if (!source) { $("s-advice").textContent = "no director or robot in the room"; return; }
     try {
-      const text = await room.localParticipant.performRpc({ destinationIdentity: "director", method: "status", payload: "" });
+      const text = await room.localParticipant.performRpc({ destinationIdentity: source, method: "status", payload: "" });
       const s = JSON.parse(text);
       $("s-phase").textContent = s.phase; $("s-stage").textContent = s.stage || "–";
       $("s-points").textContent = s.points; $("s-clock").textContent = s.clock_left_s + " s";
       $("s-proj").textContent = s.projected_if_stop_now;
       const adv = $("s-advice"); adv.textContent = s.advice || ("verdict: " + (s.last_verdict || "–"));
       adv.className = "v" + (/CALL STOP/.test(s.advice || "") ? " advice-stop" : "");
+      $("lk-source").textContent = source + (s.sample_age_s != null ? " · sample " + s.sample_age_s + " s old" : "");
+      if (s.runner) {
+        const r = s.runner;
+        $("lk-runner").textContent = (r.mode || "") + " " + (r.phase || "") + (r.rtt_s ? " · Dream round trip " + r.rtt_s + " s" : "")
+          + (r.checkpoint ? " · " + r.checkpoint : "");
+      }
     } catch (e) { $("s-advice").textContent = "status RPC failed: " + e.message; }
   }
 
