@@ -28,16 +28,19 @@ from pathlib import Path
 
 HOME = Path.home()
 TOOLS = HOME / "PhyHillClimb-tools"
-STATE = TOOLS / "finetune_state.json"
-STATUS = TOOLS / "finetune_status.txt"
-LOCK = TOOLS / "finetune_monitor.lock"
+TAG = sys.argv[1] if len(sys.argv) > 1 else "right"  # one monitor per job: right, left, ...
+STATE = TOOLS / (f"finetune_state_{TAG}.json" if TAG != "right" else "finetune_state.json")
+STATUS = TOOLS / (f"finetune_status_{TAG}.txt" if TAG != "right" else "finetune_status.txt")
+LOCK = TOOLS / f"finetune_monitor_{TAG}.lock"
 MAX_ATTEMPTS = 4
 WARM_HOURS = (5, 16)  # local hours during which the finished model is kept warm
-CHECK_SESSION = HOME / "hackathon_data/nuck4-right-arm-campaign-20261107/unplug-right"
+SIDE = "left" if TAG.startswith("left") else "right"
+CHECK_SESSION = (HOME / "hackathon_data/nuck4-right-arm-campaign-20261107/unplug-right" if SIDE == "right"
+                 else HOME / "hackathon_data/nuck4-subtask-campaign-20261107/stack-left")
 EMBODIMENT = {
-    "state": {"right_arm": [0, 6], "right_gripper": [6, 7]},
-    "action": {"right_arm": [0, 6], "right_gripper": [6, 7]},
-    "video": {"overhead": "observation.images.scene", "wrist_r": "observation.images.wrist"},
+    "state": {f"{SIDE}_arm": [0, 6], f"{SIDE}_gripper": [6, 7]},
+    "action": {f"{SIDE}_arm": [0, 6], f"{SIDE}_gripper": [6, 7]},
+    "video": {"overhead": "observation.images.scene", f"wrist_{SIDE[0]}": "observation.images.wrist"},
     "head_camera": "overhead",
 }
 
@@ -60,6 +63,12 @@ def save_state(state: dict) -> None:
 
 def write_status(text: str) -> None:
     STATUS.write_text(f"{now()} {text}\n")
+
+
+def log_fail(text: str) -> int:
+    log(f"NEEDS_HUMAN: {text}")
+    write_status(f"NEEDS_HUMAN: {text}")
+    return 0
 
 
 def dataset_fault(error: str | None) -> bool:
@@ -127,7 +136,7 @@ def warm(state: dict) -> None:
                        "timeout_ms": 30000})
         client.reset_episode()
         client.set_observation({"video.overhead": frame, "video.wrist_r": frame},
-                               {"prompt": "warm up", "state.right_arm": [0.0] * 6, "state.right_gripper": [50.0]}, timestamp=time.time())
+                               {"prompt": "warm up", f"state.{SIDE}_arm": [0.0] * 6, f"state.{SIDE}_gripper": [50.0]}, timestamp=time.time())
         t0 = time.time()
         client.get_action()
         log(f"warm: model answered in {time.time() - t0:.1f} s")
@@ -145,9 +154,30 @@ def main() -> int:
             fcntl.flock(lock, fcntl.LOCK_EX | fcntl.LOCK_NB)
         except OSError:
             return 0  # the previous run is still going
-        from dream import fine_tuning
+        from dream import datasets, fine_tuning
 
         state = load_state()
+        if not state.get("job_id") and state.get("pending"):
+            pend = state["pending"]
+            try:
+                ds = datasets.get_dataset(pend["dataset_id"])
+            except Exception as error:  # noqa: BLE001
+                log(f"pending: dataset status unavailable ({type(error).__name__}); next run"); return 0
+            if ds.status != "processed":
+                log(f"pending: dataset {ds.name} is {ds.status} ({ds.error or ''}); next run")
+                write_status(f"waiting: dataset {ds.status}")
+                return 0 if ds.status != "failed" else log_fail(f"dataset failed: {ds.error}")
+            try:
+                job = fine_tuning.create(ds.name, pend["suffix"], steps=int(pend.get("steps", 1000)), use_eef=False)
+            except Exception as error:  # noqa: BLE001
+                log(f"pending: queue refused ({type(error).__name__}: {str(error)[:160]}); next run")
+                write_status(f"waiting to queue: {str(error)[:100]}")
+                return 0
+            state.update({"job_id": job["id"], "dataset": ds.name, "suffix": pend["suffix"], "suffix_base": pend["suffix"].rsplit("-v", 1)[0],
+                          "steps": int(pend.get("steps", 1000)), "attempts": 1, "model": None, "checked": False, "history": []})
+            state.pop("pending", None)
+            save_state(state)
+            log(f"QUEUED {job['id']} suffix={pend['suffix']} on {ds.name} ({job.get('price_cents')} cents held)")
         try:
             job = fine_tuning.get(state["job_id"])
         except Exception as error:  # noqa: BLE001

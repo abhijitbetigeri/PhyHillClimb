@@ -8,11 +8,20 @@ Two lab entry points are available:
 | Blueprint | Task | Judge |
 |---|---|---|
 | `phyhillclimb.autoresearch-stack` | red on blue | original two-cube placement check |
-| `phyhillclimb.autoresearch-three-cube` | three-cube tower | bench-height base, adjacent centres 5 cm apart, radial offset at most 1.5 cm, cube faces within 15 degrees of horizontal |
+| `phyhillclimb.autoresearch-three-cube` | ordered tower, optional stick (`TOWER_ORDER`) | validated geometry, gripper clearance and fresh-pose stability dwell |
 
-The three-cube judge checks truth-pose geometry only. It does **not** yet prove gripper release,
-physical support/contact, or the competition's 3 seconds of stability. Do not report its success as
-a verified competition pass.
+The standalone geometry judges check truth poses only. The three-cube lab now wraps its ordered
+judge with `StableTowerJudge`: it requires conservative gripper clearance and fresh snapshots
+spanning at least 3 wall-clock seconds, with at most 3 mm translation and 5 degrees rotation from
+the first sample. Observation gaps over 1 second fail verification. Samples and verdicts are saved
+in the session's `verification.jsonl`. A stalled pose stream raises through the trial infrastructure.
+
+This is an observed simulation dwell, not 3 seconds measured on the MuJoCo physics clock. The
+clearance sphere rules out gripper support but does not inspect contacts with other arm links.
+Artificial floor plates, exact object poses, limited layout randomization and uncalibrated foam
+physics still limit hardware transfer. Historical geometry-only pass rates below must not be
+reported as passes under this stronger verifier. Restart the lab to load the new judge; existing
+sessions and their results are preserved.
 
 Install/update the entry points into the existing DimOS environment:
 
@@ -76,7 +85,21 @@ Three-cube tower (lab `autoresearch-three-cube`, judge: consecutive cubes within
 | tower v3 | travel at 0.30 m, straight descents, sag fed forward | 0/2 | level 1 still 1.3–2.4 cm off; the Mac sim stalled |
 | tower v4 | release-drag compensation, 35 % jaw opening, judge-matched seat check | 0/5 | level 1 seated 4/4 at 0.8–1.4 cm; no IK solution at 0.30 m over the yellow cube |
 | tower v5 | travel at 0.25 m with fallbacks (run on HF Jobs) | **5/5, held-out 9/10** (45–51 s per pass) | full tower geometry passes; the one held-out miss was the carry refused because the lifted cube left its cleared map zone |
-| tower v6 | re-clear the held cube after the lift | running | |
+| tower v6 | re-clear the held cube after the lift | not scored (lab switched to the ordered task) | |
+
+Ordered task (`TOWER_ORDER="yellow,red,blue,red stick"`, judge `OrderedTowerJudge`: order, 1.5 cm, stick in the top cube within 1.2 cm):
+
+| Candidate | Change | Dev | What the traces showed |
+|---|---|---|---|
+| tower_order_v1 | task text parsed for the order; stick as a fourth level | 0/5 | two levels in 4 of 5, then planner failures at the far corner where the yellow cube starts |
+| tower_order_v2 | base cube carried to a build spot 26 cm in front of the arm | 0/5 | no IK solution rising to 0.25 m at the far corner |
+| tower_order_v3 | rise steps down to a reachable height | 0/5 | set-down over bare bench refused: the carried cube is an obstacle again outside its cleared zone |
+| tower_order_v4 | carried object re-cleared over its destination; bench objects moved within reach | 0/5 | towers go up (0.6–1.1 cm) but the 120 s program timeout kills every trial; stick knocked over |
+| tower_order_v5 | stick grasped higher, tighter set-down, lab timeout 300 s | 0/5 | three cubes stack (blue 0.3–1.5 cm off red); the jaw flicks the stick over when closing; 113–246 s |
+| tower_order_v6 | jaw closes on the stick in four steps; fallen stick skipped | 0/5 | stick still knocked on the descent (first planned move 2–3 cm short in x, re-aims sweep the open jaw at stick height) or dropped during the planned carry |
+| tower_order_v7 | re-aim 4 cm above the grasp, one straight final descent; stick hang in the set-down height | running | |
+| tower_order_v8 | stick gripped at its centre, straight-line carry at fixed orientation, given up when fallen | queued | |
+
 
 Facts every candidate must respect (all measured, see `candidates/stack_v7.py`):
 

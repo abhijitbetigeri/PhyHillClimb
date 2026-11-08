@@ -12,6 +12,7 @@ script talks to the API directly with a matching embodiment instead:
     python tools/dream_single_arm_finetune.py queue --dataset <user>/<name> --suffix unplug-v1 [--steps 1000]
     python tools/dream_single_arm_finetune.py jobs                          # every fine-tune job
 
+Set DREAM_ARM_SIDE=left for the left-arm recordings (embodiment metal-left-arm-7).
 Credentials: DREAM_API_KEY, DREAM_GATEWAY_URL, DREAM_API_URL, DREAM_DATA_URL from the environment or .env, or
 `~/.dreamlabs/credentials` as the client reads it. Queueing is paid ($200 at 1000 steps) and never implicit.
 """
@@ -33,11 +34,12 @@ load_env()
 import dream.datasets as datasets  # noqa: E402
 import dream.fine_tuning as fine_tuning  # noqa: E402
 
-EMBODIMENT_NAME = "metal-right-arm-7"
+SIDE = os.environ.get("DREAM_ARM_SIDE", "right")  # right or left: which single arm the datasets recorded
+EMBODIMENT_NAME = f"metal-{SIDE}-arm-7"
 EMBODIMENT_CONFIG = {
-    "state": {"right_arm": [0, 6], "right_gripper": [6, 7]},
-    "action": {"right_arm": [0, 6], "right_gripper": [6, 7]},
-    "video": {"overhead": "observation.images.scene", "wrist_r": "observation.images.wrist"},
+    "state": {f"{SIDE}_arm": [0, 6], f"{SIDE}_gripper": [6, 7]},
+    "action": {f"{SIDE}_arm": [0, 6], f"{SIDE}_gripper": [6, 7]},
+    "video": {"overhead": "observation.images.scene", f"wrist_{SIDE[0]}": "observation.images.wrist"},
     "head_camera": "overhead",
 }
 
