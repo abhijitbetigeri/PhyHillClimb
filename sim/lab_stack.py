@@ -25,7 +25,8 @@ HERE = Path(__file__).resolve().parent
 DIMOS = Path(os.environ.get("DIMOS_ROOT", Path.home() / "projects" / "dimos"))
 sys.path.insert(0, str(DIMOS))
 
-from sim.judges import ThreeCubeJudge  # noqa: E402
+from sim.judges import OrderedTowerJudge, ThreeCubeJudge  # noqa: E402
+from sim.scene_video import SceneVideoModule  # noqa: E402
 
 from dimos.agents.mcp.mcp_server import McpServer  # noqa: E402
 from dimos.autoresearch.judge import Judge, Snapshot, Verdict, moved  # noqa: E402
@@ -55,15 +56,41 @@ from dimos.robot.manipulators.makermods_metal.mjcf import make_metal_sim_module_
 from dimos.simulation.engines.mujoco_sim_module import MujocoSimModule  # noqa: E402
 
 STACK_BENCH = HERE / "stack_bench.xml"
-BODIES = ("cube_blue", "cube_red", "cube_yellow", "peg_orange", "peg_red")
+BODIES = ("cube_blue", "cube_red", "cube_yellow", "peg_yellow", "peg_red")
 TRUTH = {
     "cube_blue": TruthObject(size=(0.05, 0.05, 0.05)),
     "cube_red": TruthObject(size=(0.05, 0.05, 0.05)),
     "cube_yellow": TruthObject(size=(0.05, 0.05, 0.05)),
-    "peg_orange": TruthObject(size=(0.02, 0.02, 0.10)),
+    "peg_yellow": TruthObject(size=(0.02, 0.02, 0.10)),
     "peg_red": TruthObject(size=(0.02, 0.02, 0.06)),
 }
+PEG_HALF = {"peg_yellow": 0.05, "peg_red": 0.03}
 TASK = "stack the red cube on top of the blue cube"
+#: The tower the three-cube lab builds, bottom to top, then the stick: any permutation of the cubes, e.g.
+#: TOWER_ORDER="blue,yellow,red,yellow stick". Set it in the environment before launching the lab.
+TOWER_ORDER = os.environ.get("TOWER_ORDER", "yellow,red,blue,red stick")
+
+
+def parse_order(text: str) -> tuple[list[str], str | None]:
+    """'yellow,red,blue,red stick' -> (['cube_yellow', 'cube_red', 'cube_blue'], 'peg_red')."""
+    cubes, peg = [], None
+    for item in [i.strip().lower() for i in text.split(",") if i.strip()]:
+        colour = item.split()[0]
+        if "stick" in item or "peg" in item:
+            peg = f"peg_{colour}"
+        else:
+            cubes.append(f"cube_{colour}")
+    return cubes, peg
+
+
+def tower_task_text(cubes: list[str], peg: str | None) -> str:
+    names = [c.replace("cube_", "") for c in cubes]
+    text = f"stack the {names[0]} cube first"
+    for n in names[1:]:
+        text += f", then the {n} cube on top"
+    if peg:
+        text += f", then stand the {peg.replace('peg_', '')} stick in the top cube's hole"
+    return text
 
 
 @dataclass(frozen=True)
@@ -107,13 +134,19 @@ class StackLab(AutoresearchModule):
 
 
 class ThreeCubeLab(StackLab):
-    """Full tower geometry task; does not yet certify release or the 3 s dwell."""
+    """The tower in the order TOWER_ORDER asks for, with the stick in the top cube; release and the 3 s dwell are
+    not certified."""
 
     def _judge(self) -> Judge:
-        return ThreeCubeJudge()
+        cubes, peg = parse_order(TOWER_ORDER)
+        return OrderedTowerJudge(tuple(cubes), peg, peg_half_m=PEG_HALF.get(peg or "", 0.03))
 
     def _success_rule(self) -> str:
-        return "three cubes centred vertically, 5 cm between centres, base on bench; release and 3 s stability unverified"
+        cubes, peg = parse_order(TOWER_ORDER)
+        rule = f"cubes stacked bottom to top in the order {[c.replace('cube_', '') for c in cubes]}, each within 1.5 cm of the one below and 5 cm above it, upright"
+        if peg:
+            rule += f"; the {peg.replace('peg_', '')} stick standing in the top cube's hole (within 1.2 cm of its centre)"
+        return rule + "; release and 3 s stability unverified"
 
 
 def build(full_stack: bool = False):
@@ -122,12 +155,14 @@ def build(full_stack: bool = False):
     model = make_metal_model_config(robot="arm", home_joints=METAL_SIM_HOME, tf_extra_links=METAL_TF_LINKS)
     label = "three_cube" if full_stack else "stack"
     session = RECORDINGS_DIR / f"autoresearch_{label}_{datetime.now():%Y%m%d_%H%M%S}"
-    task = "stack all three cubes into a tower and release" if full_stack else TASK
+    cubes, peg = parse_order(TOWER_ORDER)
+    task = tower_task_text(cubes, peg) if full_stack else TASK
     lab_type = ThreeCubeLab if full_stack else StackLab
+    judge_body = cubes[1] if full_stack and len(cubes) > 1 else "cube_red"  # the first cube that moves is randomised
     metal_sim = autoconnect(
         MujocoSimModule.blueprint(
-            **sim_kwargs, headless=True, fps=5, scene_camera_fps=2, pointcloud_fps=2, width=320, height=240
-        ),
+            **sim_kwargs, headless=True, fps=5, scene_camera_fps=10, pointcloud_fps=2, width=640, height=480
+        ),  # override from the CLI on a slow machine: --mujocosimmodule.width 320 --mujocosimmodule.scene-camera-fps 2
         coordinator(
             hardware=[make_metal_sim_hardware()],
             tasks=[
@@ -146,10 +181,12 @@ def build(full_stack: bool = False):
         EpisodeMonitorModule.blueprint(instance_name="episodes", task=task),
         metal_sim,
         TruthSceneModule.blueprint(objects=TRUTH),
+        SceneVideoModule.blueprint(out_dir=str(session / "scene"), fps=10.0),
         lab_type.blueprint(
             session_dir=session,
             task=task,
-            judge_body="cube_red",
+            judge_body=judge_body,
+            program_timeout_s=300.0,  # a four-level tower with a relocation and retries needs more than the 120 s default
             placement_bounds=PlacementBounds(x=(0.18, 0.28), y=(0.08, 0.18), z=0.025, yaw=(-0.5, 0.5)),
             budget=Budget(iterations=5, candidates_per_round=3, dev_trials=5, heldout_trials=10, threshold=0.8),
         ),

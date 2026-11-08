@@ -1,8 +1,11 @@
-<mujoco model="metal bench: peg stack">
-  <!-- The Hill Climb stage 2 toy on the dimos Metal bench (station videos, Sat 14:00): three 5 cm foam cubes (about 20 g each, the sim jaw's force is capped at 3 N) with
-       through-holes (red, blue, yellow) and two loose foam pegs (orange 10 cm, red 6 cm). Bench top is z = 0 and the
-       arm's base_link stands on it at the origin, as in dimos's bench.xml. Five free bodies on body_poses.
-       The pass bar is three layers: cube on cube on cube. Pegs are optional extra height. -->
+<mujoco model="metal bench: cube tower with sticks">
+  <!-- The Hill Climb stage 2 toy on the dimos Metal bench, as described on Sat evening: three 5 cm foam cubes
+       (yellow, red, blue), each with a 3 cm square hole, and two foam sticks (red 6 cm, yellow 10 cm) that stand in
+       a cube's hole. The tower is built in a chosen order (any permutation), then a stick goes into the top cube's
+       hole. Bench top is z = 0; the arm's base_link stands on it at the origin (dimos bench.xml). Foam weighs about
+       20 g per cube; the sim jaw is capped at 3 N. Each cube has a thin floor plate halfway down its hole so a stick
+       rests inside it instead of falling through the stack (real foam holds a stick by friction; rigid MuJoCo
+       geometry cannot). -->
   <option integrator="implicitfast" timestep="0.002"/>
   <statistic center="0.25 0 0.1" extent="0.8"/>
   <visual>
@@ -18,8 +21,7 @@
     <material name="bench_top" rgba="0.55 0.45 0.35 1"/>
     <material name="bench_leg" rgba="0.4 0.35 0.3 1"/>
     <material name="red" rgba="0.85 0.1 0.1 1"/>
-    <material name="orange" rgba="0.95 0.55 0.1 1"/>
-    <material name="blue" rgba="0.15 0.45 0.85 1"/>
+        <material name="blue" rgba="0.15 0.45 0.85 1"/>
     <material name="yellow" rgba="0.95 0.85 0.1 1"/>
   </asset>
   <default>
@@ -29,43 +31,47 @@
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" pos="0 0 -0.74" type="plane" material="groundplane" friction="1 0.005 0.0001" condim="3"/>
-    <camera name="scene_camera" pos="1.15 -0.52 0.75" xyaxes="0.5 0.866 0 -0.433 0.25 0.866" fovy="50"/>
+    <!-- the video recorder's camera: like the station's overhead camera, behind the arm's base, looking across the table -->
+    <camera name="scene_camera" pos="-0.08 0 0.40" xyaxes="0 -1 0 0.72 0 0.69" fovy="55"/>
     <geom name="bench_top" type="box" size="0.35 0.30 0.01" pos="0.25 0 -0.01" material="bench_top" friction="1 0.005 0.0001" condim="3"/>
     <geom name="bench_leg1" type="cylinder" size="0.02 0.36" pos="-0.07 -0.27 -0.38" material="bench_leg"/>
     <geom name="bench_leg2" type="cylinder" size="0.02 0.36" pos="0.57 -0.27 -0.38" material="bench_leg"/>
     <geom name="bench_leg3" type="cylinder" size="0.02 0.36" pos="-0.07  0.27 -0.38" material="bench_leg"/>
     <geom name="bench_leg4" type="cylinder" size="0.02 0.36" pos="0.57  0.27 -0.38" material="bench_leg"/>
 
-    <!-- cube_blue: 5 cm foam cube with a 2.4 cm square through-hole (walls 1.3 cm thick) -->
+    <!-- cube_blue: 5 cm foam cube with a 3 cm square hole (walls 1 cm), floor plate halfway down -->
     <body name="cube_blue" pos="0.30 0.00 0.025">
       <freejoint/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 0.0185 0" material="blue" mass="0.006"/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 -0.0185 0" material="blue" mass="0.006"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="0.0185 0 0" material="blue" mass="0.004"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="-0.0185 0 0" material="blue" mass="0.004"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 0.020 0" material="blue" mass="0.006"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 -0.020 0" material="blue" mass="0.006"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="0.020 0 0" material="blue" mass="0.004"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="-0.020 0 0" material="blue" mass="0.004"/>
+      <geom type="box" size="0.015 0.015 0.0025" pos="0 0 0" material="blue" mass="0.002"/>
     </body>
-    <!-- cube_red: 5 cm foam cube with a 2.4 cm square through-hole (walls 1.3 cm thick) -->
-    <body name="cube_red" pos="0.24 0.12 0.025">
+    <!-- cube_red: 5 cm foam cube with a 3 cm square hole (walls 1 cm), floor plate halfway down -->
+    <body name="cube_red" pos="0.22 0.12 0.025">
       <freejoint/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 0.0185 0" material="red" mass="0.006"/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 -0.0185 0" material="red" mass="0.006"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="0.0185 0 0" material="red" mass="0.004"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="-0.0185 0 0" material="red" mass="0.004"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 0.020 0" material="red" mass="0.006"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 -0.020 0" material="red" mass="0.006"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="0.020 0 0" material="red" mass="0.004"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="-0.020 0 0" material="red" mass="0.004"/>
+      <geom type="box" size="0.015 0.015 0.0025" pos="0 0 0" material="red" mass="0.002"/>
     </body>
-    <!-- cube_yellow: 5 cm foam cube with a 2.4 cm square through-hole (walls 1.3 cm thick) -->
-    <body name="cube_yellow" pos="0.34 0.14 0.025">
+    <!-- cube_yellow: 5 cm foam cube with a 3 cm square hole (walls 1 cm), floor plate halfway down -->
+    <body name="cube_yellow" pos="0.30 0.11 0.025">
       <freejoint/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 0.0185 0" material="yellow" mass="0.006"/>
-      <geom type="box" size="0.025 0.0065 0.025" pos="0 -0.0185 0" material="yellow" mass="0.006"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="0.0185 0 0" material="yellow" mass="0.004"/>
-      <geom type="box" size="0.0065 0.012 0.025" pos="-0.0185 0 0" material="yellow" mass="0.004"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 0.020 0" material="yellow" mass="0.006"/>
+      <geom type="box" size="0.025 0.005 0.025" pos="0 -0.020 0" material="yellow" mass="0.006"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="0.020 0 0" material="yellow" mass="0.004"/>
+      <geom type="box" size="0.005 0.015 0.025" pos="-0.020 0 0" material="yellow" mass="0.004"/>
+      <geom type="box" size="0.015 0.015 0.0025" pos="0 0 0" material="yellow" mass="0.002"/>
     </body>
-    <!-- pegs standing on the bench (lying pegs roll off in sim): orange 10 cm, red 6 cm, r = 1 cm -->
-    <body name="peg_orange" pos="0.20 -0.10 0.05">
+    <!-- sticks standing on the bench (a lying stick rolls in sim): yellow 10 cm, red 6 cm, r = 1 cm -->
+    <body name="peg_yellow" pos="0.20 -0.10 0.05">
       <freejoint/>
-      <geom type="cylinder" size="0.01 0.05" material="orange" mass="0.010" friction="1.2 0.05 0.01"/>
+      <geom type="cylinder" size="0.01 0.05" material="yellow" mass="0.010" friction="1.2 0.05 0.01"/>
     </body>
-    <body name="peg_red" pos="0.28 -0.14 0.03">
+    <body name="peg_red" pos="0.27 -0.12 0.03">
       <freejoint/>
       <geom type="cylinder" size="0.01 0.03" material="red" mass="0.006" friction="1.2 0.05 0.01"/>
     </body>
