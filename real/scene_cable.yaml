@@ -1,0 +1,10 @@
+# Measured objects for the unplug program (cable_v1), right arm base frame, metres, box centres (see scene.yaml).
+# hub: the strip's housing box, yaw = the strip's direction about z. plug_a / plug_b: the plug HOUSING standing in
+# its socket: xyz = housing centre (measure the housing top height and subtract half its 4 cm length), yaw = the
+# strip's yaw (the jaw squeezes across the strip). Sim layout (sim/cable_bench.xml), NOT a measurement.
+frame: world
+bench_z: 0.0
+objects:
+  hub:    {xyz: [0.26, 0.0, 0.0175], size: [0.26, 0.05, 0.035], yaw: 0.0}
+  plug_a: {xyz: [0.235, 0.0, 0.055], size: [0.018, 0.012, 0.040], yaw: 0.0}
+  plug_b: {xyz: [0.285, 0.0, 0.055], size: [0.018, 0.012, 0.040], yaw: 0.0}

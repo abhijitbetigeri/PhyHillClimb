@@ -1,0 +1,12 @@
+# Measured objects for the tower program (tower_order_v24), in the RIGHT arm's base frame ("world" on the stack):
+# origin = base_link origin (centre of the base's bottom plate on the bench), x forward (the way the arm faces at
+# joint1 = 0), y to the arm's LEFT, z up; metres. xyz is the BOX CENTRE. Leave z out for an object standing on the
+# bench (centre = half its height up). yaw is the cube's rotation about z in radians (0 = faces square to x).
+# Edit, then reload without restarting:  ~/dimos-real/.venv/bin/python -m real.scene_ctl reload
+# These numbers are the sim bench's layout (sim/stack_bench.xml), NOT a measurement: replace every one.
+frame: world
+bench_z: 0.0
+objects:
+  cube_yellow: {xyz: [0.30, 0.11], size: [0.05, 0.05, 0.05], yaw: 0.0}
+  cube_red:    {xyz: [0.22, 0.12], size: [0.05, 0.05, 0.05], yaw: 0.0}
+  cube_blue:   {xyz: [0.30, 0.00], size: [0.05, 0.05, 0.05], yaw: 0.0}

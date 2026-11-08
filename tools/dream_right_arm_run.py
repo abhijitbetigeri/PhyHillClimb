@@ -4,7 +4,7 @@ Runs on the station inside the teammates' environment, which owns the CAN driver
 
     cd ~/Superfast-harness
     ~/dream-env/bin/python ~/PhyHillClimb-tools/dream_right_arm_run.py --check                       # imports + config only
-    ~/dream-env/bin/python ~/PhyHillClimb-tools/dream_right_arm_run.py --task "Unplug all the cables from the cable set." --dry-run
+    ~/dream-env/bin/python ~/PhyHillClimb-tools/dream_right_arm_run.py --task "Using the right arm, unplug all the cables from the cable set." --dry-run
     ~/dream-env/bin/python ~/PhyHillClimb-tools/dream_right_arm_run.py --task "..." --live --seconds 60   # a person on the e-stop
 
 Dry run opens the cameras and reads the arms, asks the model and logs every target it would send; nothing is
@@ -34,14 +34,459 @@ EMBODIMENT = {
 DEFAULT_CHECKPOINT = os.environ.get("DREAM_CHECKPOINT", "")
 SHORT_SIDE = 240
 MAX_STEP_RAD = 0.06  # per row, on top of the SDK's own cap
+SEAM_ROWS = 6        # rows over which a new chunk is blended from the last commanded target (0.3 s at 20 Hz)
+MIN_ASK_INTERVAL_S = 0.75  # Dream's rate limit: 3 calls, then one per 0.7 s
+
+# Assisted pull. The fine-tune reaches the plug (its settled pose matches the demos' grasp poses) but never closes
+# fully or pulls. In the 10 recorded unplug demos the jaw closes onto the plug (it stops at 5-17 of 100 because the
+# plug is in it), then the shoulder lift rises 0.09-0.17 rad within 2 s and the pan often swings ~0.3 rad away.
+ASSIST_STILL_S = 2.0          # the arm has been still this long ...
+ASSIST_STILL_RAD = 0.03       # ... moving less than this on every joint ...
+ASSIST_MIN_LIFT_DEPTH = -2.2  # ... with the shoulder lift this far down (demos grasp at -2.51 to -2.59)
+ASSIST_HOLD_MIN = 0.03        # measured jaw (0 closed, 1 open) above this after closing = something is in it
+ASSIST_HOLD_MAX = 0.28        # ... and below this: a plug reads 0.08-0.19 (demos 0.05-0.17); wider is a cable loop
+ASSIST_LIFT_RAD = 0.18        # shoulder lift rise for the pull (demos: +0.09 to +0.17 in 2 s)
+ASSIST_PAN_RAD = -0.30        # then swing the pan away with the plug (demos: about -0.3)
 
 
-def jpeg_b64(rgb, short_side: int) -> str:
+def save_snapshots(cameras, folder, stem) -> None:
+    """Write the newest frame of every camera as <folder>/<stem>_<role>.jpg (small, for debugging)."""
+    import cv2
+
+    for role, cam in cameras.items():
+        rgb = cam.read()
+        if rgb is None:
+            continue
+        small = cv2.resize(rgb, (480, int(round(rgb.shape[0] * 480 / rgb.shape[1]))), interpolation=cv2.INTER_AREA)
+        cv2.imwrite(str(folder / f"{stem}_{role}.jpg"), cv2.cvtColor(small, cv2.COLOR_RGB2BGR),
+                    [int(cv2.IMWRITE_JPEG_QUALITY), 80])
+
+
+PULL_TORQUE_STEP_NM = 0.25   # raise the hold torque by this when the plug resists
+PULL_RESIST_RAD = 0.05       # shoulder lagging its pull target by more than this = the plug is resisting
+PULL_SLIP_JAW = 0.02         # measured jaw below this during the pull = the grip slipped (closed on nothing)
+PULL_EXTRA_MAX_RAD = 0.35    # most the shoulder's pull target may run ahead of the demo's, rad
+DROP_PAN_RAD = -0.40         # swing the pan this far after the pull before opening the jaw (demos: -0.2 to -0.5)
+PROBE_MAX = 3                # extra close attempts, each a step further forward, before handing back to the model
+PROBE_STEP = None            # set on first use: shoulder -0.05, elbow +0.06 rad per probe (numpy is imported lazily)
+GRASP_ROLL_RAD = -0.25       # wrist roll (joint 6) of every successful grasp so far (-0.23 to -0.32; demos -0.14 to -0.31)
+GRASP_ROLL_TOL_RAD = 0.40    # straighten the roll before closing when it is further off than this
+DROP_CLEAR_RISE_RAD = 0.45   # shoulder rise above the drop spot after letting go, before the model continues
+DROP_NO_GRASP_PAN_RAD = 0.2  # never start a grasp within this pan distance of the drop spot (the dropped cable is there)
+pull_hold_torque_max = 1.0   # set from --pull-hold-torque; the vendor's range is 0.1 to 2.0 N.m
+
+
+def gripper_controller(arms, side: str = "right"):
+    """The driver's gripper holding controller for one arm, or None if this driver does not expose one.
+    Path: MetalArms._arms[side] (FollowerArm) ._driver (MotorArm) .chain .gripper (MetalGripper) .controller."""
+    try:
+        return arms._arms[side]._driver.chain.gripper.controller
+    except AttributeError:
+        return None
+
+
+class HoldTorque:
+    """Raises the gripper's hold torque for a pull and always restores it (the station config's value, 0.5 N.m)."""
+
+    def __init__(self, arms, log, started):
+        self.ctrl, self.log, self.started = gripper_controller(arms), log, started
+        self.original = getattr(self.ctrl, "torque_nm", None)
+        self.now = self.original
+
+    def set(self, nm: float, why: str) -> None:
+        if self.ctrl is None or self.original is None:
+            return
+        nm = max(0.1, min(2.0, pull_hold_torque_max, float(nm)))
+        if abs(nm - (self.now or 0)) < 1e-6:
+            return
+        self.ctrl.torque_nm = nm
+        self.now = nm
+        self.log.write(json.dumps({"t": round(time.monotonic() - self.started, 3), "hold_torque_nm": nm, "why": why}) + "\n")
+        print(f"assist: hold torque {nm:.2f} N.m ({why})")
+
+    def restore(self) -> None:
+        if self.ctrl is not None and self.original is not None:
+            self.ctrl.torque_nm = self.original
+            self.now = self.original
+
+
+DEMO_DIR = Path.home() / "hackathon_data/nuck4-right-arm-campaign-20261107/unplug-right/data/chunk-000"
+DEMO_START_POSE = [0.09, -0.02, 0.05, 0.13, -0.02, -0.05]  # where the recorded demos began (jaw open), rad
+DEMO_SNAP_MAX_RAD = 1.5  # the pull is replayed relative to the model's pose, so any demo within this (largest joint gap) will do
+
+
+def load_demo_grasps():
+    """Per recorded unplug demo: the commanded pose 0.5 s before the jaw closes, and the recorded commands from there
+    through the close and 3 s of pull (30 per second, joints rad + jaw 0-100). Demos without a clear grasp are skipped."""
+    import numpy as np
+    import pyarrow.parquet as pq
+
+    grasps = []
+    for path in sorted(DEMO_DIR.glob("episode_*.parquet")):
+        action = np.stack(pq.read_table(path).column("action").to_pylist()).astype(float)
+        seen_open, g = False, None
+        for k, jaw in enumerate(action[:, 6]):
+            seen_open = seen_open or jaw > 30
+            if seen_open and jaw < 5:
+                g = k
+                break
+        if g is None or g < 15 or g + 90 > len(action):
+            continue
+        pre = g - 15
+        grasps.append({"episode": path.stem, "pre": action[pre, :6].copy(), "tail": action[pre:g + 90].copy()})
+    return grasps
+
+
+def assist_demo_grasp(arms, joints, left_hold, log, started, grasps, state=None):
+    """Ease from where the model stopped into the closest recorded pre-grasp pose (jaw as the demo had it), then
+    play that demo's own close and pull. Returns None when no demo is close enough."""
+    import numpy as np
+
+    global PROBE_STEP
+    if PROBE_STEP is None:
+        # shoulder down 0.05 and elbow out 0.06 rad: the jaw tips move a few cm forward and down along the approach
+        # (the successful first-plug grasps sat 0.15-0.2 rad deeper on both joints than the short second-plug stops)
+        PROBE_STEP = np.array([0.0, -0.05, 0.06, 0.0, 0.0, 0.0])
+    state = {} if state is None else state
+    pose = np.asarray(joints["right"], dtype=float)
+    near = [d for d in grasps if np.abs(d["pre"] - pose).max() <= DEMO_SNAP_MAX_RAD]
+    if not near:
+        return None
+
+    def lift(d):  # the demo's pull: shoulder rise over the 3 s after the jaw closes, if it barely pans
+        rise = d["tail"][-1, 1] - d["tail"][15, 1]
+        pan = abs(d["tail"][-1, 0] - d["tail"][15, 0])
+        return rise if pan < 0.06 else -1.0
+
+    best = max(near, key=lift)
+    tail = best["tail"]
+    cur = pose.copy()
+
+    def send(target, grip, note):
+        nonlocal cur
+        cur = cur + np.clip(np.asarray(target) - cur, -0.03, 0.03)
+        arms.command({"right": cur.tolist(), "left": left_hold[0]}, {"right": float(grip), "left": left_hold[1]})
+        j, g = arms.read()
+        log.write(json.dumps({"t": round(time.monotonic() - started, 3), "assist": note, "demo": best["episode"],
+                              "target": [round(float(v), 4) for v in cur], "grip": round(float(grip), 3),
+                              "measured": [round(float(v), 4) for v in j["right"]],
+                              "grip_measured": round(float(g["right"]), 4)}) + "\n")
+        return float(g["right"])
+
+    # Play the demo's close and pull as motion RELATIVE to where the model stopped. Moving into the demo's absolute
+    # pose first (the earlier version) carried the jaw off a plug the model had already straddled, because the strip
+    # never sits exactly where it sat in the demo.
+    # The arm also stays exactly still until the jaw has closed (rows 0-44: 0.5 s before the close plus the 1 s close);
+    # only the pull itself (row 45 on) moves it, by the demo's motion from that moment.
+    # Gripper angle: every successful grasp had the wrist roll near GRASP_ROLL_RAD; the model sometimes arrives
+    # rolled by 100 degrees (demo 8's style) and the jaw then closes beside the plug. Straighten it first.
+    if abs(pose[5] - GRASP_ROLL_RAD) > GRASP_ROLL_TOL_RAD:
+        print(f"assist: wrist roll {pose[5]:.2f} rad; straightening to {GRASP_ROLL_RAD:.2f} before closing")
+        straight = pose.copy()
+        straight[5] = GRASP_ROLL_RAD
+        for _ in range(90):
+            send(straight, max(0.3, tail[0, 6] / 100.0), "straighten-roll")
+            time.sleep(1 / 30)
+            if abs(straight[5] - cur[5]) < 0.01:
+                break
+        pose = straight
+    tail = tail.copy()
+    pull_delta = tail[45:, :6] - tail[44, :6]  # the demo's pull, as motion from the moment the jaw is shut
+    jaw_profile = tail[:, 6] / 100.0
+    held = None
+    torque = HoldTorque(arms, log, started)
+    try:
+        # Close at the model's pose. If the jaw shuts on nothing, the plug is usually just beyond the jaw tips (the
+        # wrist frames show the model stopping a few cm short of the second plug), so probe: open, step the jaw
+        # forward and down a little, close again, up to PROBE_MAX times, before giving the arm back to the model.
+        for probe in range(PROBE_MAX + 1):
+            for k in range(45):
+                jm = send(pose, jaw_profile[k], "demo-close" if probe == 0 else f"probe{probe}-close")
+                time.sleep(1 / 30)
+            held = jm
+            if ASSIST_HOLD_MIN <= held <= ASSIST_HOLD_MAX:
+                if probe:
+                    print(f"assist: probe {probe} found the plug (jaw {held:.3f})")
+                break
+            if probe == PROBE_MAX:  # closed on nothing every time: reopen, back off a little, let the model re-aim
+                lifted = pose + np.array([0, 0.05, 0, 0, 0, 0])
+                for _ in range(20):
+                    send(pose, 0.9, "miss-reopen")
+                    time.sleep(1 / 30)
+                for _ in range(20):
+                    send(lifted, 0.9, "miss-backoff")
+                    time.sleep(1 / 30)
+                return f"missed: demo {best['episode']}: jaw closed to {held:.3f} (nothing in it) after {PROBE_MAX} probes; back to the model"
+            for _ in range(15):
+                send(pose, 0.9, f"probe{probe + 1}-open")
+                time.sleep(1 / 30)
+            pose = pose + PROBE_STEP
+            print(f"assist: jaw at {held:.3f} after closing ({'nothing' if held < ASSIST_HOLD_MIN else 'a cable loop, not a plug'}); probing forward (step {probe + 1})")
+        extra = 0.0  # extra shoulder lift added when the plug resists
+        for k, row in enumerate(tail[45:]):  # the demo's own pull, at recorded speed, from the grasp pose
+            k += 45
+            pulling = True
+            target = pose + pull_delta[k - 45]
+            if k == 45:
+                torque.set(max(0.5, (torque.original or 0.5) + PULL_TORQUE_STEP_NM), "pull starts")
+            target[1] += extra
+            jm = send(target, row[6] / 100.0, "demo-pull")
+            if pulling and k % 6 == 0:  # every 0.2 s: is the plug resisting, or did the grip slip?
+                j = arms.read()[0]["right"]
+                if jm < PULL_SLIP_JAW:
+                    log.write(json.dumps({"t": round(time.monotonic() - started, 3), "assist": "slip", "grip_measured": jm}) + "\n")
+                    print(f"assist: grip slipped during the pull (jaw {jm:.3f})")
+                    break
+                if target[1] - j[1] > PULL_RESIST_RAD and torque.now is not None:
+                    torque.set(torque.now + PULL_TORQUE_STEP_NM, f"plug resisting, shoulder {target[1] - j[1]:.3f} rad behind")
+                    extra = min(extra + 0.03, PULL_EXTRA_MAX_RAD)  # lean further into the pull
+            time.sleep(1 / 30)
+        else:
+            # The demo's pull is over. If the jaw still holds and the shoulder still lags (the plug has not let
+            # go), keep leaning in: the motor pulls harder the further its target runs ahead of it.
+            last = tail[-1].copy()
+            for k in range(90):  # at most 3 s
+                j, g = arms.read()
+                lag = (last[1] + extra) - j["right"][1]
+                if g["right"] < PULL_SLIP_JAW:
+                    print(f"assist: grip slipped during the sustained pull (jaw {g['right']:.3f})")
+                    break
+                if lag < PULL_RESIST_RAD / 2:
+                    print(f"assist: shoulder caught up (lag {lag:.3f} rad): the plug has let go")
+                    break
+                if k % 6 == 0:
+                    extra = min(extra + 0.03, PULL_EXTRA_MAX_RAD)
+                    if torque.now is not None:
+                        torque.set(torque.now + PULL_TORQUE_STEP_NM, f"sustained pull, shoulder {lag:.3f} rad behind")
+                target = last[:6].copy()
+                target[1] += extra
+                send(target, last[6] / 100.0, "sustained-pull")
+                time.sleep(1 / 30)
+            else:
+                print(f"assist: plug still holding after the sustained pull (extra lead {extra:.2f} rad)")
+        # Drop the cable away from the strip, as the demos did (they swing the pan 0.2-0.5 rad negative after the
+        # pull), so the jaw is free and the cable cannot fall back onto the strip.
+        if arms.read()[1]["right"] >= PULL_SLIP_JAW and state.get("drop_mode", "in-place") == "in-place":
+            # Release right here: the plug is out and lifted; open the jaw and leave the arm where it is, so the
+            # model continues to the next plug from this pose.
+            here = np.asarray(arms.read()[0]["right"], dtype=float)
+            carried = float(arms.read()[1]["right"])
+            torque.restore()
+            for _ in range(30):
+                send(here, 1.0, "release-in-place")
+                time.sleep(1 / 30)
+            state["drop_pose"] = here.copy()
+            if carried >= 0.05:
+                state["dropped"] = state.get("dropped", 0) + 1
+                print(f"assist: cable {state['dropped']} released in place (jaw was {carried:.3f})")
+            else:
+                print(f"assist: jaw was empty after the pull ({carried:.3f}); not counted")
+        elif arms.read()[1]["right"] >= PULL_SLIP_JAW:
+            here = np.asarray(arms.read()[0]["right"], dtype=float)
+            if state.get("drop_pose") is None:
+                # First cable: swing away from the strip and remember where; later cables go to the same spot.
+                state["drop_pose"] = here + np.array([DROP_PAN_RAD, 0, 0, 0, 0, 0])
+            away = state["drop_pose"]
+            for _ in range(150):  # up to 5 s; send() caps each step at 0.03 rad
+                send(away, 0.0, "carry-away")
+                time.sleep(1 / 30)
+                if np.abs(away - cur).max() < 0.005:
+                    break
+            carried = float(arms.read()[1]["right"])  # jaw opening on arrival: >= 0.05 means a cable is still in it
+            torque.restore()  # let go at the station's normal hold torque
+            for _ in range(30):
+                send(away, 1.0, "drop")
+                time.sleep(1 / 30)
+            if carried >= 0.05:
+                state["dropped"] = state.get("dropped", 0) + 1
+                print(f"assist: cable {state['dropped']} dropped at the drop spot (jaw was {carried:.3f} on arrival)")
+            else:
+                print(f"assist: carried nothing to the drop spot (jaw {carried:.3f}); not counted")
+            # Rise well above the drop spot before the model takes over, so the next grasp cannot trigger here
+            # (the dropped cable lies right below) and the model restarts from a high pose, as in the demos.
+            clear = away + np.array([0, DROP_CLEAR_RISE_RAD, 0, 0, 0, 0])
+            for _ in range(90):
+                send(clear, 1.0, "clear")
+                time.sleep(1 / 30)
+                if np.abs(clear - cur).max() < 0.005:
+                    break
+    finally:
+        torque.restore()
+    final = arms.read()[1]["right"]
+    return (f"demo {best['episode']}: jaw stopped at {held:.3f} after closing "
+            f"({'something in it' if held is not None and held > ASSIST_HOLD_MIN else 'closed on nothing'}), "
+            f"{final:.3f} after the pull")
+
+
+# Stacking assist. The 10 right-arm stacking demos never close the jaw fully: on a foam cube the jaw stops at about
+# 0.50 of open (0 closed, 1 open), and the operators commanded 0.35-0.50. The model reaches a cube but then hovers,
+# so: when it settles low, close fully (the jaw stops on the cube), lift, hand the carry back to the model with the
+# jaw held shut, and when it settles again open and retreat upward.
+STACK_MIN_LIFT_DEPTH = -1.5   # shoulder lift at or below this = low enough to be at a cube (demos: -1.6 to -2.1)
+STACK_HELD_MIN = 0.25         # measured jaw above this after a full close = a cube is in it (cube reads ~0.5)
+STACK_LIFT_RAD = 0.25         # shoulder rise after the grasp, rad
+STACK_RETREAT_RAD = 0.30      # shoulder rise after the release, rad
+
+
+def stack_grasp(arms, joints, left_hold, log, started):
+    """Close fully at the model's pose; if a cube is in the jaw, lift it. Returns (held, outcome text)."""
+    import numpy as np
+
+    pose = np.asarray(joints["right"], dtype=float)
+    cur = pose.copy()
+
+    def send(target, grip, note):
+        nonlocal cur
+        cur = cur + np.clip(np.asarray(target) - cur, -0.03, 0.03)
+        arms.command({"right": cur.tolist(), "left": left_hold[0]}, {"right": float(grip), "left": left_hold[1]})
+        j, g = arms.read()
+        log.write(json.dumps({"t": round(time.monotonic() - started, 3), "assist": note,
+                              "target": [round(float(v), 4) for v in cur], "grip": round(float(grip), 3),
+                              "measured": [round(float(v), 4) for v in j["right"]],
+                              "grip_measured": round(float(g["right"]), 4)}) + "\n")
+        return float(g["right"])
+
+    for _ in range(45):  # close for 1.5 s, arm still
+        jm = send(pose, 0.0, "stack-close")
+        time.sleep(1 / 30)
+    if jm < STACK_HELD_MIN:
+        for _ in range(20):
+            send(pose, 0.9, "stack-miss-reopen")
+            time.sleep(1 / 30)
+        for _ in range(20):
+            send(pose + np.array([0, 0.05, 0, 0, 0, 0]), 0.9, "stack-miss-backoff")
+            time.sleep(1 / 30)
+        return False, f"missed: jaw closed to {jm:.3f} (no cube in it); back to the model"
+    for k in range(1, 41):  # lift over 2 s with the jaw shut
+        send(pose + np.array([0, STACK_LIFT_RAD * k / 40, 0, 0, 0, 0]), 0.0, "stack-lift")
+        time.sleep(1 / 30)
+    return True, f"holding a cube (jaw {jm:.3f}); lifted {STACK_LIFT_RAD:.2f} rad, the model carries"
+
+
+def stack_release(arms, joints, left_hold, log, started) -> str:
+    """Open the jaw where the model settled, then retreat upward so the stack is left standing."""
+    import numpy as np
+
+    pose = np.asarray(joints["right"], dtype=float)
+    cur = pose.copy()
+
+    def send(target, grip, note):
+        nonlocal cur
+        cur = cur + np.clip(np.asarray(target) - cur, -0.03, 0.03)
+        arms.command({"right": cur.tolist(), "left": left_hold[0]}, {"right": float(grip), "left": left_hold[1]})
+        j, g = arms.read()
+        log.write(json.dumps({"t": round(time.monotonic() - started, 3), "assist": note,
+                              "target": [round(float(v), 4) for v in cur], "grip": round(float(grip), 3),
+                              "measured": [round(float(v), 4) for v in j["right"]],
+                              "grip_measured": round(float(g["right"]), 4)}) + "\n")
+
+    for _ in range(30):  # open for 1 s, arm still
+        send(pose, 0.9, "stack-open")
+        time.sleep(1 / 30)
+    for k in range(1, 61):  # retreat straight up over 2 s
+        send(pose + np.array([0, STACK_RETREAT_RAD * k / 60, 0, 0, 0, 0]), 0.9, "stack-retreat")
+        time.sleep(1 / 30)
+    return "released and retreated; check whether the cube sits on the other one"
+
+
+def assist_pull(arms, joints, left_hold, log, started) -> str:
+    """Close the jaw fully where the model stopped; if the jaw stopped on something, play the demos' pull."""
+    import numpy as np
+
+    pose = np.asarray(joints["right"], dtype=float)
+
+    def hold(target, grip, seconds, note):
+        end = time.monotonic() + seconds
+        first = True
+        while first or time.monotonic() < end:  # always send at least one command per step
+            first = False
+            arms.command({"right": list(target), "left": left_hold[0]}, {"right": grip, "left": left_hold[1]})
+            j, g = arms.read()
+            log.write(json.dumps({"t": round(time.monotonic() - started, 3), "assist": note,
+                                  "target": [round(float(v), 4) for v in target], "grip": grip,
+                                  "measured": [round(float(v), 4) for v in j["right"]],
+                                  "grip_measured": round(float(g["right"]), 4)}) + "\n")
+            time.sleep(0.05)
+        return arms.read()
+
+    _, g = hold(pose, 0.0, 1.5, "close")
+    held = float(g["right"])
+    if held < ASSIST_HOLD_MIN:
+        hold(pose, 0.9, 1.0, "reopen")  # closed on nothing: open again for the model's next try
+        return f"missed (jaw closed to {held:.3f}); back to the model"
+    steps = 40  # 2 s ramp for the lift, then 2 s for the pan, jaw shut throughout
+    for k in range(1, steps + 1):
+        hold(pose + np.array([0, ASSIST_LIFT_RAD * k / steps, 0, 0, 0, 0]), 0.0, 0.05, "lift")
+    lifted = pose + np.array([0, ASSIST_LIFT_RAD, 0, 0, 0, 0])
+    for k in range(1, steps + 1):
+        hold(lifted + np.array([ASSIST_PAN_RAD * k / steps, 0, 0, 0, 0, 0]), 0.0, 0.05, "pan")
+    _, g = hold(lifted + np.array([ASSIST_PAN_RAD, 0, 0, 0, 0, 0]), 0.0, 1.0, "hold")
+    return f"pulled (jaw held at {held:.3f}, still {float(g['right']):.3f} after the pull)"
+
+
+CAPTURE_SIZE = (1280, 720)  # as Dream's SDK and the kit's station config open them; the demos were 16:9
+POLICY_SIZE = (320, 180)    # the frame size Dream's SDK sends (policy_image_size in the teammates' loop)
+
+
+class MjpgCamera:
+    """A webcam opened the way Dream's SDK opens it (robots/cameras.py): MJPG first, then 1280x720 at 30 fps.
+    V4L2's default is uncompressed YUYV, which two USB 2 webcams on one hub cannot carry at 720p: frames drop to
+    10 fps or less and arrive torn. The teammates' camera class sets the size without MJPG."""
+
+    def __init__(self, source, size=CAPTURE_SIZE, fps: float = 30.0):
+        import cv2
+
+        self.cv2 = cv2
+        self.capture = cv2.VideoCapture(int(source) if str(source).isdigit() else str(source), cv2.CAP_V4L2)
+        if not self.capture.isOpened():
+            raise RuntimeError(f"camera {source!r} did not open")
+        self.capture.set(cv2.CAP_PROP_FOURCC, cv2.VideoWriter.fourcc(*"MJPG"))
+        self.capture.set(cv2.CAP_PROP_FRAME_WIDTH, size[0])
+        self.capture.set(cv2.CAP_PROP_FRAME_HEIGHT, size[1])
+        self.capture.set(cv2.CAP_PROP_FPS, fps)
+        self.frame, self.frames, self.closing = None, 0, threading.Event()
+        self.thread = threading.Thread(target=self._run, name=f"camera-{source}", daemon=True)
+        self.thread.start()
+
+    def _run(self):
+        while not self.closing.is_set():
+            ok, bgr = self.capture.read()
+            if ok:
+                self.frame = self.cv2.cvtColor(bgr, self.cv2.COLOR_BGR2RGB)
+                self.frames += 1
+            else:
+                self.closing.wait(0.03)
+
+    def read(self):
+        return self.frame
+
+    def close(self):
+        self.closing.set()
+        self.thread.join(timeout=1)
+        self.capture.release()
+
+
+def open_cameras_16x9(sources: dict):
+    """Open each camera at 1280x720 MJPG, as Dream's SDK does. The teammates' camera class defaults to 640x480,
+    and in that 4:3 mode these webcams crop and zoom, so the model saw a narrower view than the 16:9 demos."""
+    cameras = {}
+    try:
+        for role, source in sources.items():
+            cameras[role] = MjpgCamera(source)
+    except Exception:
+        for cam in cameras.values():
+            cam.close()
+        raise
+    return cameras
+
+
+def jpeg_b64(rgb, short_side: int | None = None) -> str:
     import cv2
 
     h, w = rgb.shape[:2]
-    scale = short_side / min(h, w)
-    small = cv2.resize(rgb, (int(round(w * scale)), int(round(h * scale))), interpolation=cv2.INTER_AREA)
+    if abs(w / h - 16 / 9) > 0.02:
+        raise RuntimeError(f"camera frame is {w}x{h}, not 16:9 like the demos; refusing to send a cropped view")
+    small = cv2.resize(rgb, POLICY_SIZE, interpolation=cv2.INTER_AREA)
     ok, buf = cv2.imencode(".jpg", cv2.cvtColor(small, cv2.COLOR_RGB2BGR), [int(cv2.IMWRITE_JPEG_QUALITY), 85])
     if not ok:
         raise RuntimeError("jpeg encode failed")
@@ -73,7 +518,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", default=str(Path.home() / "physical-ai-hacks/configs/nuck4-subtasks.yaml"))
     ap.add_argument("--checkpoint", default=DEFAULT_CHECKPOINT, help="dream-1-ft:<uid8>-right-arm-v1")
-    ap.add_argument("--task", default="Unplug all the cables from the cable set.")
+    ap.add_argument("--task", default="Using the right arm, unplug all the cables from the cable set.")
     ap.add_argument("--seconds", type=float, default=45.0)
     ap.add_argument("--camera", action="append", default=[], help="role=source override, e.g. wrist_r=/dev/video4")
     ap.add_argument("--log", default=str(Path.home() / "PhyHillClimb-runs"))
@@ -81,7 +526,24 @@ def main() -> int:
     mode.add_argument("--check", action="store_true", help="imports and config only; opens nothing")
     mode.add_argument("--dry-run", action="store_true", help="cameras and arm reads, model asked, nothing commanded")
     mode.add_argument("--live", action="store_true", help="energize the arms and play the model's rows")
+    ap.add_argument("--pull-hold-torque", type=float, default=1.0,
+                    help="highest gripper hold torque during an assisted pull, N.m (0.5 is the station default; "
+                         "vendor range 0.1-2.0). Calibrate upward across runs: 1.0, then 1.5, then 2.0")
+    ap.add_argument("--drop", choices=["in-place", "away"], default="in-place",
+                    help="in-place: open the jaw where the pull ended and go on from there (default); "
+                         "away: carry each cable to one drop spot to the arm's right, then rise and go on")
+    ap.add_argument("--unplugs", type=int, default=2,
+                    help="cables to unplug in one run; each is dropped at the first cable's drop spot (default 2)")
+    ap.add_argument("--no-assist-pull", dest="assist_pull", action="store_false",
+                    help="do not take over at the plug (by default, live runs close the jaw and play the recorded pull)")
+    ap.add_argument("--relay", action="store_true",
+                    help="publish the cameras, the arm state and this runner's status to the LiveKit relay room: "
+                         "writes to a tmpfs folder (tools/relay_tap.py); `python -m relay.station_bridge` publishes it")
     a = ap.parse_args()
+    global pull_hold_torque_max
+    if not 0.1 <= a.pull_hold_torque <= 2.0:
+        raise SystemExit("--pull-hold-torque must be within the vendor's 0.1 to 2.0 N.m")
+    pull_hold_torque_max = a.pull_hold_torque
     if not (a.check or a.dry_run or a.live):
         a.dry_run = True
 
@@ -115,7 +577,24 @@ def main() -> int:
     log_dir = Path(a.log).expanduser(); log_dir.mkdir(parents=True, exist_ok=True)
     log = open(log_dir / f"right_arm_{time.strftime('%Y%m%d_%H%M%S')}_{'dry' if a.dry_run else 'live'}.jsonl", "a")
 
-    cameras = open_cameras(sources, station)
+    # LiveKit relay (optional): the newest frames, state and status go to a tmpfs folder; a separate bridge process
+    # publishes them to the room. publish() never blocks and never raises, so the control loop is unaffected.
+    tap, portal_state = None, None
+    relay_status = {"mode": "live" if a.live else "dry-run", "phase": "warmup", "task": a.task, "budget_s": a.seconds,
+                    "checkpoint": a.checkpoint, "unplugged": 0, "placed": 0, "event": "", "rtt_s": None}
+    if a.relay:
+        sys.path.insert(0, str(Path(__file__).resolve().parent))
+        from relay_tap import RelayTap, portal_state
+
+        tap = RelayTap()
+        print(f"relay: writing frames and status to {tap.dir} (start `python -m relay.station_bridge` to publish)")
+
+    def note(text: str) -> None:
+        """Print an event and show it on the relay dashboard."""
+        print(text)
+        relay_status["event"] = text
+
+    cameras = open_cameras_16x9(sources)
     arms = MetalArms(station, energize=a.live)
     try:
         joints0, grips0 = arms.read()
@@ -127,58 +606,214 @@ def main() -> int:
 
         def ask():
             try:
-                pending["chunk"] = client.get_action()
+                asked_at = time.monotonic()
+                rows_at_ask = played[0]  # rows executed when this observation went out (the RTC anchor)
+                reply = client.get_action()
+                pending["chunk"] = (reply, asked_at, rows_at_ask)
             except Exception as failure:  # noqa: BLE001
                 errors.append(failure)
 
         worker = None
+        next_ask_at = 0.0
+        observed = False  # the model may only be asked after the first full observation
+        warmup_until = time.monotonic() + 15.0
+        while time.monotonic() < warmup_until:  # cameras can take a few seconds to deliver frames
+            if all(cam.read() is not None for cam in cameras.values()):
+                break
+            time.sleep(0.1)
+        else:
+            missing = [r for r, cam in cameras.items() if cam.read() is None]
+            raise SystemExit(f"no frames from {missing} within 15 s")
+        print("cameras delivering frames")
+        if a.live:
+            # The arm driver starts every motor in a "startup sync" mode that lets it aim only 1 degree past its
+            # measured angle until it has stood within 3 degrees of its goal. The model's ever-changing gripper
+            # targets kept the jaw in that mode for most of a run, so it barely squeezed. Hold everything still
+            # until every motor has synced; then the model's rows play at full rate and full grip.
+            hold_j, hold_g = arms.read()
+            for _ in range(30):
+                arms.command({"right": list(hold_j["right"]), "left": left_hold[0]},
+                             {"right": float(hold_g["right"]), "left": left_hold[1]})
+                time.sleep(0.05)
+            print("arms synced at rest")
+            # Start from the demos' start pose. The park pose drifts by up to 0.3 rad between runs (the teammates'
+            # park returns to "the pose when opened"), and from a drifted start the model crawls instead of reaching.
+            cur = np.asarray(hold_j["right"], dtype=float)
+            goal = np.asarray(DEMO_START_POSE, dtype=float)
+            for _ in range(200):  # at most ~7 s, 0.03 rad per step
+                if np.abs(goal - cur).max() < 0.01:
+                    break
+                cur = cur + np.clip(goal - cur, -0.03, 0.03)
+                arms.command({"right": cur.tolist(), "left": left_hold[0]}, {"right": 0.9, "left": left_hold[1]})
+                time.sleep(1 / 30)
+            for _ in range(20):
+                arms.command({"right": goal.tolist(), "left": left_hold[0]}, {"right": 0.9, "left": left_hold[1]})
+                time.sleep(0.05)
+            j0 = arms.read()[0]["right"]
+            print(f"right arm at the demos' start pose {np.round(j0, 3).tolist()}; starting the model")
         started = time.monotonic()
+        history, assist_ready_at = [], 0.0
+        played, last_grip, seam = [0], 0.0, {"from": None, "left": 0}  # RTC state
+        stacking = "stack" in a.task.lower()
+        unplug_state = {"drop_mode": a.drop}  # drop spot and count, shared across the cables of one run
+        stack_holding = False  # the stack assist has a cube in the jaw and the model is carrying it
+        if stacking:
+            print("assist: stacking mode (close on a cube when the model settles low, lift, the model carries, open when it settles again)")
+        demo_grasps = load_demo_grasps() if (a.live and a.assist_pull and not stacking) else []
+        if demo_grasps:
+            print(f"assist: {len(demo_grasps)} recorded grasps loaded ({', '.join(d['episode'][-2:] for d in demo_grasps)})")
+        snap_dir = Path(log.name).with_suffix("")  # <log>/ beside <log>.jsonl
+        snap_dir.mkdir(exist_ok=True)
+        next_snap_at = 0.0
+        print(f"log {log.name}; camera snapshots in {snap_dir}/")
+        relay_status["phase"] = "model"
         while time.monotonic() - started < a.seconds:
             tick = time.monotonic()
-            frames = {}
+            frames, raw = {}, {}
             for role, cam in cameras.items():
                 rgb = cam.read()
                 if rgb is not None:
                     frames[f"video.{role}"] = jpeg_b64(rgb, SHORT_SIDE)
+                    raw[role] = rgb
             joints, grips = arms.read()
+            if tap is not None:
+                relay_status["elapsed_s"] = round(tick - started, 1)
+                relay_status["unplugged"] = unplug_state.get("dropped", 0)
+                tap.publish(raw, portal_state(joints["right"], grips["right"], left_hold[0], left_hold[1]), relay_status)
             obs = {"prompt": a.task, "state.right_arm": [float(q) for q in joints["right"]],
                    "state.right_gripper": [float(grips["right"]) * 100.0]}
             if len(frames) == 2:
                 client.set_observation(frames, obs, timestamp=tick)
+                observed = True
+            if tick >= next_snap_at:  # debugging: what the cameras saw, every 0.5 s, beside the log
+                next_snap_at = tick + 0.5
+                save_snapshots(cameras, snap_dir, f"{tick - started:06.1f}")
             if errors:
-                err = errors[0]
-                print(f"model error: {type(err).__name__}: {str(err)[:200]}")
-                if "pool_warming" in str(err) or "DA-2000" in str(err):
+                err = errors.pop(0)
+                text = str(err)
+                if "rate_limited" in text:
+                    next_ask_at = time.monotonic() + 1.0  # keep playing the rows we have; ask again shortly
+                elif "pool_warming" in text or "DA-2000" in text:
+                    print(f"model error: {type(err).__name__}: {text[:200]}")
                     errors.clear(); time.sleep(5); continue
-                return 2
+                else:
+                    print(f"model error: {type(err).__name__}: {text[:200]}")
+                    return 2
             if "chunk" in pending:
-                reply = pending.pop("chunk")
+                reply, asked_at, rows_at_ask = pending.pop("chunk")
                 per_key = reply.get("per_key", reply)
                 arm_rows = per_key.get("action.right_arm") or []
                 grip_rows = per_key.get("action.right_gripper") or []
-                chunk, executed = (arm_rows, grip_rows), 0
-                print(f"chunk: {len(arm_rows)} rows")
+                # Real-time chunking: skip only the rows actually executed since this chunk's observation (nothing
+                # while holding), and blend the seam from the last commanded target over SEAM_ROWS rows.
+                skip = min(max(0, played[0] - rows_at_ask), max(0, len(arm_rows) - 1))
+                chunk, executed = (arm_rows, grip_rows), skip
+                seam = {"from": None if last_target is None else list(last_target) + [last_grip], "left": SEAM_ROWS}
+                relay_status["rtt_s"] = round(time.monotonic() - asked_at, 2)
+                print(f"chunk: {len(arm_rows)} rows, round trip {time.monotonic() - asked_at:.2f} s, starting at row {skip}")
             rows = len(chunk[0]) if chunk else 0
             idle = worker is None or not worker.is_alive()
-            if idle and (chunk is None or client.refill_due(executed, rows - executed)):
+            # Keep one request in flight at all times: with ~2 s round trips, waiting for refill_due leaves gaps.
+            if observed and idle and time.monotonic() >= next_ask_at:
+                next_ask_at = time.monotonic() + MIN_ASK_INTERVAL_S  # Dream allows 3 calls, then one per 0.7 s
                 worker = threading.Thread(target=ask, name="dream-get-action", daemon=True); worker.start()
+            history.append((tick, np.asarray(joints["right"], dtype=float)))
+            while history and tick - history[0][0] > ASSIST_STILL_S:
+                history.pop(0)
+            settled = (history and tick - history[0][0] >= ASSIST_STILL_S * 0.9
+                       and np.abs(history[-1][1] - history[0][1]).max() < ASSIST_STILL_RAD)
+            if (a.live and a.assist_pull and stacking and tick - started > 15.0 and tick >= assist_ready_at and settled
+                    and (stack_holding or joints["right"][1] < STACK_MIN_LIFT_DEPTH)):
+                save_snapshots(cameras, snap_dir, f"{tick - started:06.1f}_stack_{'release' if stack_holding else 'grasp'}")
+                relay_status["phase"] = "assist"
+                if not stack_holding:
+                    stack_holding, outcome = stack_grasp(arms, joints, left_hold, log, started)
+                else:
+                    outcome = stack_release(arms, joints, left_hold, log, started)
+                    stack_holding = False
+                    relay_status["placed"] += 1
+                    note(f"assist: {outcome}")
+                    save_snapshots(cameras, snap_dir, f"{time.monotonic() - started:06.1f}_stack_end")
+                    break  # one cube placed per run
+                note(f"assist: {outcome}")
+                relay_status["phase"] = "model"
+                assist_ready_at = time.monotonic() + (8.0 if stack_holding else 6.0)
+                history.clear()
+                chunk = None
+                continue
+            if unplug_state.get("drop_pose") is None:
+                near_drop = False
+            elif unplug_state["drop_mode"] == "in-place":
+                # the arm must have moved on (any joint by 0.15 rad) since it released the last cable here
+                near_drop = np.abs(np.asarray(joints["right"]) - unplug_state["drop_pose"]).max() < 0.15
+            else:
+                near_drop = abs(joints["right"][0] - unplug_state["drop_pose"][0]) < DROP_NO_GRASP_PAN_RAD
+            if (a.live and a.assist_pull and not stacking and tick - started > 15.0 and tick >= assist_ready_at and settled
+                    and joints["right"][1] < ASSIST_MIN_LIFT_DEPTH and not near_drop):
+                save_snapshots(cameras, snap_dir, f"{tick - started:06.1f}_assist_start")
+                relay_status["phase"] = "assist"
+                outcome = assist_demo_grasp(arms, joints, left_hold, log, started, demo_grasps, unplug_state) if demo_grasps else None
+                relay_status["phase"] = "model"
+                if outcome is not None:
+                    note(f"assist: {outcome}")
+                    save_snapshots(cameras, snap_dir, f"{time.monotonic() - started:06.1f}_assist_end")
+                    if outcome.startswith("missed"):
+                        assist_ready_at = time.monotonic() + 6.0  # let the model re-aim, then try again
+                        history.clear()
+                        chunk = None  # drop the stale chunk; the next reply plans from the new pose
+                        continue
+                    if unplug_state.get("dropped", 0) >= a.unplugs:
+                        print(f"assist: {unplug_state['dropped']} cable(s) unplugged and dropped; done")
+                        break
+                    # Next cable: the model reaches again from the drop spot ("unplug all the cables").
+                    print(f"assist: {unplug_state.get('dropped', 0)} of {a.unplugs} done; the model goes for the next plug")
+                    assist_ready_at = time.monotonic() + 5.0
+                    history.clear()
+                    chunk = None
+                    continue
+                outcome = assist_pull(arms, joints, left_hold, log, started)
+                save_snapshots(cameras, snap_dir, f"{time.monotonic() - started:06.1f}_assist_end")
+                note(f"assist: {outcome}")
+                if outcome.startswith("pulled"):
+                    break
+                assist_ready_at = time.monotonic() + 6.0  # missed: give the model a few seconds to regrasp
+                history.clear()
+                continue
             if chunk is not None and executed < rows:
                 target = [float(q) for q in chunk[0][executed][:6]]
-                grip_units = float(chunk[1][executed][0]) if executed < len(chunk[1]) else grips["right"] * 100.0
+                if executed < len(chunk[1]):
+                    g = chunk[1][executed]  # the service sends a number per row; the stand-in a one-item list
+                    grip_units = float(g[0] if isinstance(g, (list, tuple)) else g)
+                else:
+                    grip_units = grips["right"] * 100.0
                 current = np.asarray(joints["right"], dtype=float)
                 step = np.clip(np.asarray(target) - current, -MAX_STEP_RAD, MAX_STEP_RAD)
                 target = (current + step).tolist()
                 grip = min(1.0, max(0.0, grip_units / 100.0))
+                if seam["from"] is not None and seam["left"] > 0:  # blend into the new chunk, no jump at the seam
+                    w = 1.0 - seam["left"] / (SEAM_ROWS + 1)
+                    target = [(1 - w) * f0 + w * t1 for f0, t1 in zip(seam["from"][:6], target)]
+                    grip = (1 - w) * seam["from"][6] + w * grip
+                    seam["left"] -= 1
+                last_grip = grip
+                played[0] += 1
+                if stack_holding:
+                    grip = 0.0  # keep the cube: the model's jaw commands are ignored while it carries
                 log.write(json.dumps({"t": round(tick - started, 3), "row": executed, "target": [round(v, 4) for v in target],
-                                      "grip": round(grip, 3), "measured": [round(float(v), 4) for v in current]}) + "\n")
+                                      "grip": round(grip, 3), "measured": [round(float(v), 4) for v in current],
+                                      "grip_measured": round(float(grips["right"]), 4)}) + "\n")
                 if a.live:
                     arms.command({"right": target, "left": left_hold[0]}, {"right": grip, "left": left_hold[1]})
                 last_target = target
                 executed += 1
             time.sleep(max(0.0, 1.0 / hz - (time.monotonic() - tick)))
-        print(f"done: last target {np.round(last_target, 3).tolist() if last_target else None}")
+        note(f"done: last target {np.round(last_target, 3).tolist() if last_target else None}")
+        relay_status["phase"] = "done"
         return 0
     finally:
+        if tap is not None:
+            tap.publish({}, {}, relay_status)  # the final status (done / the error phase) reaches the dashboard
+            tap.close()
         log.close()
         for cam in cameras.values():
             try: cam.close()

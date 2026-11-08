@@ -90,8 +90,12 @@ def wait_processed(ds_id: str, minutes: int = 60) -> bool:
     return False
 
 
-def queue(dataset: str, suffix: str, steps: int | None, base_share: float | None, lr_schedule: str | None) -> None:
-    job = fine_tuning.create(dataset, suffix, steps=steps, use_eef=False, base_share=base_share, lr_schedule=lr_schedule)
+def queue(dataset: str, suffix: str, steps: int | None, base_share: float | None, lr_schedule: str | None,
+          resume_from: str | None = None) -> None:
+    """Queue a job; with --resume-from <dream-1-ft:...> it continues that model for `steps` more steps (charged for
+    those alone; the service keeps the model's learning rate, batch size and constant schedule)."""
+    job = fine_tuning.create(dataset, suffix, steps=steps, use_eef=False, base_share=base_share, lr_schedule=lr_schedule,
+                             resume_from=resume_from)
     print(json.dumps(job, indent=1, default=str))
 
 
@@ -106,6 +110,7 @@ def main() -> int:
     p = sub.add_parser("queue"); p.add_argument("--dataset", required=True); p.add_argument("--suffix", required=True)
     p.add_argument("--steps", type=int, default=None); p.add_argument("--base-share", type=float, default=None)
     p.add_argument("--lr-schedule", default=None)
+    p.add_argument("--resume-from", default=None, help="dream-1-ft:<uid8>-<suffix> to keep training")
     sub.add_parser("jobs")
     a = ap.parse_args()
     if a.cmd == "register":
@@ -119,7 +124,7 @@ def main() -> int:
     elif a.cmd == "wait":
         return 0 if wait_processed(a.ds_id, a.minutes) else 1
     elif a.cmd == "queue":
-        queue(a.dataset, a.suffix, a.steps, a.base_share, a.lr_schedule)
+        queue(a.dataset, a.suffix, a.steps, a.base_share, a.lr_schedule, a.resume_from)
     elif a.cmd == "jobs":
         for job in fine_tuning.list():
             print(json.dumps(job, default=str)[:300])

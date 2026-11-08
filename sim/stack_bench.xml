@@ -31,8 +31,8 @@
   <worldbody>
     <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
     <geom name="floor" size="0 0 0.05" pos="0 0 -0.74" type="plane" material="groundplane" friction="1 0.005 0.0001" condim="3"/>
-    <!-- the video recorder's camera: like the station's overhead camera, behind the arm's base, looking across the table -->
-    <camera name="scene_camera" pos="-0.08 0 0.40" xyaxes="0 -1 0 0.72 0 0.69" fovy="55"/>
+    <!-- the video recorder's camera: an oblique view from the operator's side so the arm does not hide the tower -->
+    <camera name="scene_camera" pos="0.05 -0.5 0.42" xyaxes="0.958 -0.287 0.000 0.157 0.523 0.838" fovy="50"/>
     <geom name="bench_top" type="box" size="0.35 0.30 0.01" pos="0.25 0 -0.01" material="bench_top" friction="1 0.005 0.0001" condim="3"/>
     <geom name="bench_leg1" type="cylinder" size="0.02 0.36" pos="-0.07 -0.27 -0.38" material="bench_leg"/>
     <geom name="bench_leg2" type="cylinder" size="0.02 0.36" pos="0.57 -0.27 -0.38" material="bench_leg"/>
@@ -67,11 +67,11 @@
       <geom type="box" size="0.015 0.015 0.0025" pos="0 0 0" material="yellow" mass="0.002"/>
     </body>
     <!-- sticks standing on the bench (a lying stick rolls in sim): yellow 10 cm, red 6 cm, r = 1 cm -->
-    <body name="peg_yellow" pos="0.20 -0.10 0.05">
+    <body name="peg_yellow" pos="0.13 -0.17 0.05">
       <freejoint/>
       <geom type="cylinder" size="0.01 0.05" material="yellow" mass="0.010" friction="1.2 0.05 0.01"/>
     </body>
-    <body name="peg_red" pos="0.27 -0.12 0.03">
+    <body name="peg_red" pos="0.20 -0.12 0.03">
       <freejoint/>
       <geom type="cylinder" size="0.01 0.03" material="red" mass="0.006" friction="1.2 0.05 0.01"/>
     </body>

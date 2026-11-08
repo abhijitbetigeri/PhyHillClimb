@@ -1,0 +1,73 @@
+diff --git a/dimos/autoresearch/module.py b/dimos/autoresearch/module.py
+index c2a16af8da..17ce28cb63 100644
+--- a/dimos/autoresearch/module.py
++++ b/dimos/autoresearch/module.py
+@@ -87,7 +87,7 @@ robot.arm.move_pose(xyz, orientation=None)   # orientation: roll, pitch, yaw or
+ robot.arm.move_linear(dx=0, dy=0, dz=0)      # straight line, metres
+ robot.arm.move_joints(positions); robot.arm.home()
+ robot.gripper.open(); robot.gripper.close(); robot.gripper.set(value); robot.gripper.range() -> (closed, open)
+-robot.scene.objects(["cube", "bowl"]) -> [SceneObject(id, name, position, size)]   # world metres, box centre
++robot.scene.objects(["cube", "bowl"]) -> [SceneObject(id, name, position, size, yaw)]   # world metres, box centre
+ robot.observe() -> keyframe path; robot.log(text)
+ Motion calls block and raise RobotCallError (status PLANNING_FAILED, EXECUTION_FAILED or TIMEOUT).
+ Every call goes to the trial's trace.jsonl, with a keyframe before and after each motion call.
+diff --git a/dimos/autoresearch/program.py b/dimos/autoresearch/program.py
+index 47c167ea8d..fff7ef6fd7 100644
+--- a/dimos/autoresearch/program.py
++++ b/dimos/autoresearch/program.py
+@@ -85,12 +85,15 @@ class Pose:
+ @dataclass(frozen=True)
+ class SceneObject:
+     """One detected object: ``position`` is the centre of its bounding box and
+-    ``size`` the box extents, both in metres in the world frame."""
++    ``size`` the box extents, both in metres in the world frame. ``yaw`` is the
++    box's rotation about the world z axis in radians (0 when the detector reports
++    none), so a grasp can align the jaws with the object's faces."""
+ 
+     id: str
+     name: str
+     position: tuple[float, float, float]
+     size: tuple[float, float, float]
++    yaw: float = 0.0
+ 
+ 
+ @dataclass(frozen=True)
+@@ -435,6 +438,17 @@ def subscribe_map(app: Dimos, maps: MapStamps) -> Callable[[], None]:
+     return stream.subscribe(maps.on_map)
+ 
+ 
++
++def _yaw_of(q: Any) -> float:
++    """The rotation about z of an xyzw quaternion, radians; 0 for a missing or identity orientation."""
++    try:
++        x, y, z, w = float(q.x), float(q.y), float(q.z), float(q.w)
++    except AttributeError:
++        return 0.0
++    if x == y == z == 0.0:
++        return 0.0
++    return math.atan2(2.0 * (w * z + x * y), 1.0 - 2.0 * (y * y + z * z))
++
+ class DimosBackend:
+     """``RobotBackend`` over a running DimOS stack: the ``Arm`` SDK for motion
+     and the gripper, the object-registration module for the scene, the map's
+@@ -539,6 +553,7 @@ class DimosBackend:
+                     float(detection.bbox.size.y),
+                     float(detection.bbox.size.z),
+                 ),
++                yaw=_yaw_of(detection.bbox.center.orientation),
+             )
+             for detection in detections.detections
+             if detection.id and detection.results
+diff --git a/dimos/autoresearch/prompt.py b/dimos/autoresearch/prompt.py
+index 6d3b037d59..72ca416a53 100644
+--- a/dimos/autoresearch/prompt.py
++++ b/dimos/autoresearch/prompt.py
+@@ -35,7 +35,7 @@ RobotCallError (with a .status) when planning or execution fails; catch it to tr
+   robot.arm.home()                        the home preset
+   robot.gripper.open() / .close()         fully open or closed
+   robot.gripper.set(x), .range()          the gripper joint at x; range() gives (closed, open)
+-  robot.scene.objects(words)              detected objects: id, name, position (m), size (m)
++  robot.scene.objects(words)              detected objects: id, name, position (m), size (m), yaw (rad)
+   robot.scene.clear(object_id, margin)    leave that object, plus margin (m, default 0.03) on
+                                           every side, out of the obstacle map: the map treats
+                                           every object as an obstacle, so clear each object

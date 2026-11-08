@@ -16,6 +16,15 @@ dependencies = []
 [project.entry-points."dimos.blueprints"]
 autoresearch-stack = "sim.lab_stack:lab"
 autoresearch-three-cube = "sim.lab_stack:three_cube_lab"
+# stage 1: the cable set (sim/lab_cable.py); CABLE_TASK overrides the task text
+autoresearch-cable-unplug = "sim.lab_cable:unplug_lab"
+autoresearch-cable-plug = "sim.lab_cable:plug_lab"
+autoresearch-cable-cycle = "sim.lab_cable:cycle_lab"
+# the real right Metal behind the Autoresearch live backend (real/blueprint_real.py, real/RUNBOOK.md)
+metal-real-program = "real.blueprint_real:metal_real_program"
+metal-real-program-testcam = "real.blueprint_real:metal_real_program_testcam"
+# the same planner, measured scene and stand-in map on the MuJoCo Metal (real/verify_measured_sim.py)
+metal-measured-sim = "real.blueprint_measured_sim:metal_measured_sim"
 
 [tool.hatch.build.targets.wheel]
-packages = ["sim", "relay", "harness"]
+packages = ["sim", "relay", "harness", "real"]

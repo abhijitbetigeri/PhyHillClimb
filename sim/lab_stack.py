@@ -15,6 +15,7 @@ Programs move gripper_base, the jaw's mount; the finger pads are ~7.8 cm further
 from __future__ import annotations
 
 import math
+import json
 import os
 import sys
 from dataclasses import dataclass
@@ -25,7 +26,8 @@ HERE = Path(__file__).resolve().parent
 DIMOS = Path(os.environ.get("DIMOS_ROOT", Path.home() / "projects" / "dimos"))
 sys.path.insert(0, str(DIMOS))
 
-from sim.judges import OrderedTowerJudge, ThreeCubeJudge  # noqa: E402
+from sim.judges import OrderedTowerJudge, StableTowerJudge, ThreeCubeJudge  # noqa: E402
+from sim.motion_capture import MotionCaptureModule  # noqa: E402
 from sim.scene_video import SceneVideoModule  # noqa: E402
 
 from dimos.agents.mcp.mcp_server import McpServer  # noqa: E402
@@ -69,6 +71,22 @@ TASK = "stack the red cube on top of the blue cube"
 #: The tower the three-cube lab builds, bottom to top, then the stick: any permutation of the cubes, e.g.
 #: TOWER_ORDER="blue,yellow,red,yellow stick". Set it in the environment before launching the lab.
 TOWER_ORDER = os.environ.get("TOWER_ORDER", "yellow,red,blue,red stick")
+#: The session budget and the actor Dimensional's `start_actor` RPC runs, overridable from the environment so a
+#: short session fits a machine slot: AR_ITERATIONS, AR_CANDIDATES_PER_ROUND, AR_DEV_TRIALS, AR_HELDOUT_TRIALS,
+#: AR_THRESHOLD, AR_MODEL, AR_ACTOR_PROVIDER, AR_ACTOR_MAX_STEPS, AR_ACTOR_TIMEOUT_S.
+BUDGET = Budget(
+    iterations=int(os.environ.get("AR_ITERATIONS", 5)),
+    candidates_per_round=int(os.environ.get("AR_CANDIDATES_PER_ROUND", 3)),
+    dev_trials=int(os.environ.get("AR_DEV_TRIALS", 5)),
+    heldout_trials=int(os.environ.get("AR_HELDOUT_TRIALS", 10)),
+    threshold=float(os.environ.get("AR_THRESHOLD", 0.8)),
+)
+ACTOR = dict(
+    model=os.environ.get("AR_MODEL", "claude-sonnet-4-5"),
+    actor_provider=os.environ.get("AR_ACTOR_PROVIDER", "anthropic"),
+    actor_max_steps=int(os.environ.get("AR_ACTOR_MAX_STEPS", 600)),
+    actor_timeout_s=float(os.environ.get("AR_ACTOR_TIMEOUT_S", 2 * 3600)),
+)
 
 
 def parse_order(text: str) -> tuple[list[str], str | None]:
@@ -134,19 +152,41 @@ class StackLab(AutoresearchModule):
 
 
 class ThreeCubeLab(StackLab):
-    """The tower in the order TOWER_ORDER asks for, with the stick in the top cube; release and the 3 s dwell are
-    not certified."""
+    """Ordered tower with conservative gripper clearance and a fresh-pose stability dwell."""
 
     def _judge(self) -> Judge:
         cubes, peg = parse_order(TOWER_ORDER)
-        return OrderedTowerJudge(tuple(cubes), peg, peg_half_m=PEG_HALF.get(peg or "", 0.03))
+        geometry = OrderedTowerJudge(tuple(cubes), peg, peg_half_m=PEG_HALF.get(peg or "", 0.03))
+
+        def observe():
+            # snapshot() waits for new body poses, halts arm execution and waits
+            # for rest; a stalled simulator times out instead of reusing a frame.
+            snapshot = self._world.snapshot()
+            state = self._arm.get_state().groups["arm"]
+            if state.end_effector_pose is None:
+                raise RuntimeError("tool telemetry unavailable during tower verification")
+            return snapshot, state.end_effector_pose.position.to_tuple()
+
+        def record(event):
+            path = self.config.session_dir / "verification.jsonl"
+            with path.open("a") as stream:
+                stream.write(json.dumps(event, allow_nan=False) + "\n")
+
+        return StableTowerJudge(geometry, observe, record=record)
 
     def _success_rule(self) -> str:
         cubes, peg = parse_order(TOWER_ORDER)
         rule = f"cubes stacked bottom to top in the order {[c.replace('cube_', '') for c in cubes]}, each within 1.5 cm of the one below and 5 cm above it, upright"
         if peg:
             rule += f"; the {peg.replace('peg_', '')} stick standing in the top cube's hole (within 1.2 cm of its centre)"
-        return rule + "; release and 3 s stability unverified"
+        return rule + "; gripper clear and stable fresh poses for 3 wall-clock seconds (3 mm / 5 degree drift limit)"
+
+
+def capture_blueprints(session: Path) -> list:
+    """The motion recorder for offline renders (sim/render_replay.py), only when CAPTURE_MOTION=1."""
+    if os.environ.get("CAPTURE_MOTION", "0") != "1":
+        return []
+    return [MotionCaptureModule.blueprint(out_path=str(session / "motion.jsonl"))]
 
 
 def build(full_stack: bool = False):
@@ -182,13 +222,15 @@ def build(full_stack: bool = False):
         metal_sim,
         TruthSceneModule.blueprint(objects=TRUTH),
         SceneVideoModule.blueprint(out_dir=str(session / "scene"), fps=10.0),
+        *capture_blueprints(session),
         lab_type.blueprint(
             session_dir=session,
             task=task,
             judge_body=judge_body,
             program_timeout_s=300.0,  # a four-level tower with a relocation and retries needs more than the 120 s default
             placement_bounds=PlacementBounds(x=(0.18, 0.28), y=(0.08, 0.18), z=0.025, yaw=(-0.5, 0.5)),
-            budget=Budget(iterations=5, candidates_per_round=3, dev_trials=5, heldout_trials=10, threshold=0.8),
+            budget=BUDGET,
+            **ACTOR,
         ),
         McpServer.blueprint(),
     ).remappings([("recorder", "wrist_image", "color_image")])

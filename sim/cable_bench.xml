@@ -1,0 +1,105 @@
+<mujoco model="metal bench: usb hub and plugs">
+  <!-- The Hill Climb stage 1 object on the dimos Metal bench: a cable set (a power strip with USB sockets on its
+       top face, as in the station videos: notes/station-backup/datasets/unplug-right) lying along the arm's x axis
+       within comfortable reach, with two USB plugs standing in its sockets. Each plug is a free body: a 1.2 x 0.45 cm
+       blade 2.5 cm long seated in a vertical slot (1 mm clearance per side, 1 cm solid floor under it), a bright
+       housing 1.8 x 1.2 x 4.0 cm above the hub for the jaw, and a short cable stub on top. The socket axis is +z,
+       so an unplug is a straight lift; gravity and wall friction hold a plug, a 3 N jaw lifts it. The sockets are
+       5 cm apart because the Metal's fingers are 4 cm wide along the tool's x axis (metal.xml meshes): the jaw
+       squeezes a plug along y, across the strip, and its fingers must not land on the other plug.
+       The hub is a heavy free body (1.5 kg) so the trial reset can place it; the judges fail a trial that moves it.
+       Bench top is z = 0; the arm's base_link stands on it at the origin (dimos bench.xml). A third plug body lies
+       on its side (the "loose cable" of the plug-in task) and is parked at the far corner by the unplug labs.
+       Body origins: hub at the centre of its bottom face; plugs at the centre of the blade. -->
+  <option integrator="implicitfast" timestep="0.002"/>
+  <statistic center="0.25 0 0.1" extent="0.8"/>
+  <visual>
+    <headlight diffuse="0.7 0.7 0.7" ambient="0.4 0.4 0.4" specular="0 0 0"/>
+    <rgba haze="0.15 0.25 0.35 1"/>
+    <global azimuth="150" elevation="-20"/>
+  </visual>
+  <asset>
+    <texture type="skybox" builtin="gradient" rgb1="0.3 0.5 0.7" rgb2="0 0 0" width="512" height="3072"/>
+    <texture type="2d" name="groundplane" builtin="checker" mark="edge" rgb1="0.85 0.85 0.85" rgb2="0.75 0.75 0.75"
+      markrgb="0.9 0.9 0.9" width="300" height="300"/>
+    <material name="groundplane" texture="groundplane" texuniform="true" texrepeat="5 5" reflectance="0"/>
+    <material name="bench_top" rgba="0.55 0.45 0.35 1"/>
+    <material name="bench_leg" rgba="0.4 0.35 0.3 1"/>
+    <material name="hub_black" rgba="0.12 0.12 0.13 1"/>
+    <material name="blade_steel" rgba="0.75 0.75 0.78 1"/>
+    <material name="plug_orange" rgba="1.0 0.45 0.05 1"/>
+    <material name="plug_green" rgba="0.1 0.85 0.3 1"/>
+    <material name="plug_magenta" rgba="0.9 0.1 0.7 1"/>
+    <material name="cable_dark" rgba="0.9 0.3 0.05 1"/>
+  </asset>
+  <default>
+    <!-- plastic on plastic: moderate friction, stiff contacts -->
+    <geom friction="0.9 0.02 0.001" condim="4" solref="0.01 1" solimp="0.95 0.99 0.001"/>
+  </default>
+  <worldbody>
+    <light pos="0 0 1.5" dir="0 0 -1" directional="true"/>
+    <geom name="floor" size="0 0 0.05" pos="0 0 -0.74" type="plane" material="groundplane" friction="1 0.005 0.0001" condim="3"/>
+    <!-- the video recorder's camera: like the station's overhead camera, high behind the arm's base line and off to
+         its right, looking down across the table at the hub (from straight behind, the arm at home hides the hub) -->
+    <camera name="scene_camera" pos="-0.02 -0.30 0.40" xyaxes="0.7311 -0.6823 0 0.4427 0.4744 0.7608" fovy="55"/>
+    <geom name="bench_top" type="box" size="0.35 0.30 0.01" pos="0.25 0 -0.01" material="bench_top" friction="1 0.005 0.0001" condim="3"/>
+    <geom name="bench_leg1" type="cylinder" size="0.02 0.36" pos="-0.07 -0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg2" type="cylinder" size="0.02 0.36" pos="0.57 -0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg3" type="cylinder" size="0.02 0.36" pos="-0.07  0.27 -0.38" material="bench_leg"/>
+    <geom name="bench_leg4" type="cylinder" size="0.02 0.36" pos="0.57  0.27 -0.38" material="bench_leg"/>
+
+    <!-- hub: 26 x 5 x 3.5 cm strip, long axis along x, lying flat; two vertical slots 1.4 x 0.65 cm (x by y) and
+         2.5 cm deep at x = -0.025 and x = +0.025, over a 1 cm floor. Built from boxes: floor plate, a lower layer
+         (z 1-2.5 cm) of three blocks along x and two walls along y with the 1 mm-clearance slot between them, and a
+         top layer (z 2.5-3.5 cm) whose slot mouths are funnels: four plates per slot leaning out 5 mm over 1 cm
+         (63 degrees from horizontal, steeper than the 42 degree friction angle), a stand-in for the flared shell of
+         a real USB receptacle and the compliance of a real cable that the rigid sim lacks; a plug within 5 mm of the
+         axis slides into the slot. Seated, the blade rests on the slot floor with the housing at the hub top. -->
+    <body name="hub" pos="0.26 0.00 0.0">
+      <freejoint/>
+      <geom name="hub_floor" type="box" size="0.13 0.025 0.005" pos="0 0 0.005" material="hub_black" mass="0.5" friction="1.2 0.02 0.001"/>
+      <geom name="hub_end_a" type="box" size="0.049 0.025 0.0075" pos="-0.081 0 0.0175" material="hub_black" mass="0.25"/>
+      <geom name="hub_end_b" type="box" size="0.049 0.025 0.0075" pos=" 0.081 0 0.0175" material="hub_black" mass="0.25"/>
+      <geom name="hub_mid" type="box" size="0.018 0.025 0.0075" pos="0 0 0.0175" material="hub_black" mass="0.06"/>
+      <geom name="hub_wall_a" type="box" size="0.032 0.010875 0.0075" pos="0 -0.014125 0.0175" material="hub_black" mass="0.03"/>
+      <geom name="hub_wall_b" type="box" size="0.032 0.010875 0.0075" pos="0  0.014125 0.0175" material="hub_black" mass="0.03"/>
+      <geom name="hub_top_end_a" type="box" size="0.0465 0.025 0.005" pos="-0.0835 0 0.030" material="hub_black" mass="0.15"/>
+      <geom name="hub_top_end_b" type="box" size="0.0465 0.025 0.005" pos=" 0.0835 0 0.030" material="hub_black" mass="0.15"/>
+      <geom name="hub_top_mid" type="box" size="0.013 0.025 0.005" pos="0 0 0.030" material="hub_black" mass="0.04"/>
+      <geom name="hub_top_wall_a" type="box" size="0.037 0.008375 0.005" pos="0 -0.016625 0.030" material="hub_black" mass="0.02"/>
+      <geom name="hub_top_wall_b" type="box" size="0.037 0.008375 0.005" pos="0  0.016625 0.030" material="hub_black" mass="0.02"/>
+      <geom name="funnel_a_py" type="box" size="0.012 0.0025 0.00559" pos="-0.025 0.00799 0.02888" euler="-26.57 0 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_a_my" type="box" size="0.012 0.0025 0.00559" pos="-0.025 -0.00799 0.02888" euler="26.57 0 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_a_px" type="box" size="0.0025 0.009 0.00559" pos="-0.01326 0 0.02888" euler="0 26.57 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_a_mx" type="box" size="0.0025 0.009 0.00559" pos="-0.03674 0 0.02888" euler="0 -26.57 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_b_py" type="box" size="0.012 0.0025 0.00559" pos="0.025 0.00799 0.02888" euler="-26.57 0 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_b_my" type="box" size="0.012 0.0025 0.00559" pos="0.025 -0.00799 0.02888" euler="26.57 0 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_b_px" type="box" size="0.0025 0.009 0.00559" pos="0.03674 0 0.02888" euler="0 26.57 0" material="hub_black" mass="0.005"/>
+      <geom name="funnel_b_mx" type="box" size="0.0025 0.009 0.00559" pos="0.01326 0 0.02888" euler="0 -26.57 0" material="hub_black" mass="0.005"/>
+    </body>
+
+    <!-- plug_a: blade 1.2 x 0.45 x 2.5 cm (centre = body origin), housing 1.8 x 1.2 x 4.0 cm above it, stub on top.
+         Seated: origin 2.25 cm above the hub's bottom, housing from 3.5 to 7.5 cm, stub to 9 cm. -->
+    <body name="plug_a" pos="0.235 0.0 0.0225">
+      <freejoint/>
+      <geom name="plug_a_blade" type="box" size="0.006 0.00225 0.0125" pos="0 0 0" material="blade_steel" mass="0.004"/>
+      <geom name="plug_a_housing" type="box" size="0.009 0.006 0.020" pos="0 0 0.0325" material="plug_orange" mass="0.010" friction="1.2 0.02 0.001"/>
+      <geom name="plug_a_stub" type="cylinder" size="0.003 0.0075" pos="0 0 0.060" material="cable_dark" mass="0.002"/>
+    </body>
+    <body name="plug_b" pos="0.285 0.0 0.0225">
+      <freejoint/>
+      <geom name="plug_b_blade" type="box" size="0.006 0.00225 0.0125" pos="0 0 0" material="blade_steel" mass="0.004"/>
+      <geom name="plug_b_housing" type="box" size="0.009 0.006 0.020" pos="0 0 0.0325" material="plug_green" mass="0.010" friction="1.2 0.02 0.001"/>
+      <geom name="plug_b_stub" type="cylinder" size="0.003 0.0075" pos="0 0 0.060" material="cable_dark" mass="0.002"/>
+    </body>
+
+    <!-- plug_loose: the same plug lying on its side (its slot axis is the body's +x), origin at the blade centre,
+         resting height 0.006 (half the housing's thickness). Parked off the arm's reach unless a lab places it. -->
+    <body name="plug_loose" pos="0.55 -0.27 0.006">
+      <freejoint/>
+      <geom name="plug_loose_blade" type="box" size="0.0125 0.006 0.00225" pos="0 0 0" material="blade_steel" mass="0.004"/>
+      <geom name="plug_loose_housing" type="box" size="0.020 0.009 0.006" pos="0.0325 0 0" material="plug_magenta" mass="0.010" friction="1.2 0.02 0.001"/>
+      <geom name="plug_loose_stub" type="cylinder" size="0.003 0.0075" pos="0.060 0 0" quat="0.7071068 0 0.7071068 0" material="cable_dark" mass="0.002"/>
+    </body>
+  </worldbody>
+</mujoco>
