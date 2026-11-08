@@ -34,6 +34,7 @@ EMBODIMENT = {
 DEFAULT_CHECKPOINT = os.environ.get("DREAM_CHECKPOINT", "")
 SHORT_SIDE = 240
 MAX_STEP_RAD = 0.06  # per row, on top of the SDK's own cap
+SEAM_ROWS = 6        # rows over which a new chunk is blended from the last commanded target (0.3 s at 20 Hz)
 MIN_ASK_INTERVAL_S = 0.75  # Dream's rate limit: 3 calls, then one per 0.7 s
 
 # Assisted pull. The fine-tune reaches the plug (its settled pose matches the demos' grasp poses) but never closes
@@ -606,8 +607,9 @@ def main() -> int:
         def ask():
             try:
                 asked_at = time.monotonic()
+                rows_at_ask = played[0]  # rows executed when this observation went out (the RTC anchor)
                 reply = client.get_action()
-                pending["chunk"] = (reply, asked_at)
+                pending["chunk"] = (reply, asked_at, rows_at_ask)
             except Exception as failure:  # noqa: BLE001
                 errors.append(failure)
 
@@ -651,6 +653,7 @@ def main() -> int:
             print(f"right arm at the demos' start pose {np.round(j0, 3).tolist()}; starting the model")
         started = time.monotonic()
         history, assist_ready_at = [], 0.0
+        played, last_grip, seam = [0], 0.0, {"from": None, "left": 0}  # RTC state
         stacking = "stack" in a.task.lower()
         unplug_state = {"drop_mode": a.drop}  # drop spot and count, shared across the cables of one run
         stack_holding = False  # the stack assist has a cube in the jaw and the model is carrying it
@@ -697,13 +700,15 @@ def main() -> int:
                     print(f"model error: {type(err).__name__}: {text[:200]}")
                     return 2
             if "chunk" in pending:
-                reply, asked_at = pending.pop("chunk")
+                reply, asked_at, rows_at_ask = pending.pop("chunk")
                 per_key = reply.get("per_key", reply)
                 arm_rows = per_key.get("action.right_arm") or []
                 grip_rows = per_key.get("action.right_gripper") or []
-                # Rows are due by time since the request went out: skip the ones the round trip used up.
-                skip = min(int((time.monotonic() - asked_at) * hz), max(0, len(arm_rows) - 1))
+                # Real-time chunking: skip only the rows actually executed since this chunk's observation (nothing
+                # while holding), and blend the seam from the last commanded target over SEAM_ROWS rows.
+                skip = min(max(0, played[0] - rows_at_ask), max(0, len(arm_rows) - 1))
                 chunk, executed = (arm_rows, grip_rows), skip
+                seam = {"from": None if last_target is None else list(last_target) + [last_grip], "left": SEAM_ROWS}
                 relay_status["rtt_s"] = round(time.monotonic() - asked_at, 2)
                 print(f"chunk: {len(arm_rows)} rows, round trip {time.monotonic() - asked_at:.2f} s, starting at row {skip}")
             rows = len(chunk[0]) if chunk else 0
@@ -785,6 +790,13 @@ def main() -> int:
                 step = np.clip(np.asarray(target) - current, -MAX_STEP_RAD, MAX_STEP_RAD)
                 target = (current + step).tolist()
                 grip = min(1.0, max(0.0, grip_units / 100.0))
+                if seam["from"] is not None and seam["left"] > 0:  # blend into the new chunk, no jump at the seam
+                    w = 1.0 - seam["left"] / (SEAM_ROWS + 1)
+                    target = [(1 - w) * f0 + w * t1 for f0, t1 in zip(seam["from"][:6], target)]
+                    grip = (1 - w) * seam["from"][6] + w * grip
+                    seam["left"] -= 1
+                last_grip = grip
+                played[0] += 1
                 if stack_holding:
                     grip = 0.0  # keep the cube: the model's jaw commands are ignored while it carries
                 log.write(json.dumps({"t": round(tick - started, 3), "row": executed, "target": [round(v, 4) for v in target],

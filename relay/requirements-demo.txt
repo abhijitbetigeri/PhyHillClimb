@@ -1,0 +1,2 @@
+# Install alongside the project's requirements.txt for MP4 replay.
+opencv-python-headless>=4.10

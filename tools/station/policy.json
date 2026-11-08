@@ -1,0 +1,1 @@
+{"checkpoint": "dream-1-ft:2d43713b-left-arm-v1", "embodiment": {"state": {"left_arm": [0, 6], "left_gripper": [6, 7]}, "action": {"left_arm": [0, 6], "left_gripper": [6, 7]}, "video": {"overhead": "observation.images.scene", "wrist_l": "observation.images.wrist"}, "head_camera": "overhead"}, "action_hz": 20, "execution_horizon": 30, "timeout_ms": 30000}

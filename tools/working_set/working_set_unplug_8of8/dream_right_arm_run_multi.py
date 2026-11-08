@@ -34,7 +34,6 @@ EMBODIMENT = {
 DEFAULT_CHECKPOINT = os.environ.get("DREAM_CHECKPOINT", "")
 SHORT_SIDE = 240
 MAX_STEP_RAD = 0.06  # per row, on top of the SDK's own cap
-SEAM_ROWS = 6        # rows over which a new chunk is blended from the last commanded target (0.3 s at 20 Hz)
 MIN_ASK_INTERVAL_S = 0.75  # Dream's rate limit: 3 calls, then one per 0.7 s
 
 # Assisted pull. The fine-tune reaches the plug (its settled pose matches the demos' grasp poses) but never closes
@@ -42,7 +41,7 @@ MIN_ASK_INTERVAL_S = 0.75  # Dream's rate limit: 3 calls, then one per 0.7 s
 # plug is in it), then the shoulder lift rises 0.09-0.17 rad within 2 s and the pan often swings ~0.3 rad away.
 ASSIST_STILL_S = 2.0          # the arm has been still this long ...
 ASSIST_STILL_RAD = 0.03       # ... moving less than this on every joint ...
-ASSIST_MIN_LIFT_DEPTH = -1.9  # ... with the shoulder this far down (the model sometimes settles at -1.95 over a plug)
+ASSIST_MIN_LIFT_DEPTH = -2.2  # the 8/8 value
 ASSIST_HOLD_MIN = 0.03        # measured jaw (0 closed, 1 open) above this after closing = something is in it
 ASSIST_LIFT_RAD = 0.18        # shoulder lift rise for the pull (demos: +0.09 to +0.17 in 2 s)
 ASSIST_PAN_RAD = -0.30        # then swing the pan away with the plug (demos: about -0.3)
@@ -450,9 +449,8 @@ def main() -> int:
         def ask():
             try:
                 asked_at = time.monotonic()
-                rows_at_ask = played[0]  # rows executed when this observation went out (the RTC anchor)
                 reply = client.get_action()
-                pending["chunk"] = (reply, asked_at, rows_at_ask)
+                pending["chunk"] = (reply, asked_at)
             except Exception as failure:  # noqa: BLE001
                 errors.append(failure)
 
@@ -481,7 +479,6 @@ def main() -> int:
             print("arms synced at rest; starting the model")
         started = time.monotonic()
         history, assist_ready_at = [], 0.0
-        played, last_grip, seam = [0], 0.0, {"from": None, "left": 0}  # RTC state
         done_cables, last_drop_pan = 0, None  # several cables per run; no grasp near the last drop spot
         demo_grasps = load_demo_grasps() if (a.live and a.assist_pull) else []
         if demo_grasps:
@@ -528,16 +525,13 @@ def main() -> int:
                     print(f"model error: {type(err).__name__}: {text[:200]}")
                     return 2
             if "chunk" in pending:
-                reply, asked_at, rows_at_ask = pending.pop("chunk")
+                reply, asked_at = pending.pop("chunk")
                 per_key = reply.get("per_key", reply)
                 arm_rows = per_key.get("action.right_arm") or []
                 grip_rows = per_key.get("action.right_gripper") or []
-                # Real-time chunking (the teammates' RTC notes): skip only the rows actually executed since the
-                # observation this chunk answers, not a wall-clock interval (while holding, nothing was executed,
-                # so nothing is skipped), and blend the seam from the last commanded target over SEAM_ROWS rows.
-                skip = min(max(0, played[0] - rows_at_ask), max(0, len(arm_rows) - 1))
+                # Rows are due by time since the request went out: skip the ones the round trip used up.
+                skip = min(int((time.monotonic() - asked_at) * hz), max(0, len(arm_rows) - 1))
                 chunk, executed = (arm_rows, grip_rows), skip
-                seam = {"from": None if last_target is None else list(last_target) + [last_grip], "left": SEAM_ROWS}
                 print(f"chunk: {len(arm_rows)} rows, round trip {time.monotonic() - asked_at:.2f} s, starting at row {skip}")
             rows = len(chunk[0]) if chunk else 0
             idle = worker is None or not worker.is_alive()
@@ -592,13 +586,6 @@ def main() -> int:
                 step = np.clip(np.asarray(target) - current, -MAX_STEP_RAD, MAX_STEP_RAD)
                 target = (current + step).tolist()
                 grip = min(1.0, max(0.0, grip_units / 100.0))
-                if seam["from"] is not None and seam["left"] > 0:  # blend into the new chunk, no jump at the seam
-                    w = 1.0 - seam["left"] / (SEAM_ROWS + 1)
-                    target = [(1 - w) * f0 + w * t1 for f0, t1 in zip(seam["from"][:6], target)]
-                    grip = (1 - w) * seam["from"][6] + w * grip
-                    seam["left"] -= 1
-                last_grip = grip
-                played[0] += 1
                 log.write(json.dumps({"t": round(tick - started, 3), "row": executed, "target": [round(v, 4) for v in target],
                                       "grip": round(grip, 3), "measured": [round(float(v), 4) for v in current],
                                       "grip_measured": round(float(grips["right"]), 4)}) + "\n")

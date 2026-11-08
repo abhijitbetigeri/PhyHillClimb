@@ -1,0 +1,1 @@
+2026-11-08 10:15:01 READY dream-1-ft:2d43713b-left-arm-v1 check_model=PROBLEM warm=DreamObservationError: observation is missing keys declared by the configured embodiment: ['video.wrist_l']

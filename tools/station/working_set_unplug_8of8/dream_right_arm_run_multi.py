@@ -41,7 +41,7 @@ MIN_ASK_INTERVAL_S = 0.75  # Dream's rate limit: 3 calls, then one per 0.7 s
 # plug is in it), then the shoulder lift rises 0.09-0.17 rad within 2 s and the pan often swings ~0.3 rad away.
 ASSIST_STILL_S = 2.0          # the arm has been still this long ...
 ASSIST_STILL_RAD = 0.03       # ... moving less than this on every joint ...
-ASSIST_MIN_LIFT_DEPTH = -1.9  # ... with the shoulder this far down (the model sometimes settles at -1.95 over a plug)
+ASSIST_MIN_LIFT_DEPTH = -2.2  # the 8/8 value
 ASSIST_HOLD_MIN = 0.03        # measured jaw (0 closed, 1 open) above this after closing = something is in it
 ASSIST_LIFT_RAD = 0.18        # shoulder lift rise for the pull (demos: +0.09 to +0.17 in 2 s)
 ASSIST_PAN_RAD = -0.30        # then swing the pan away with the plug (demos: about -0.3)

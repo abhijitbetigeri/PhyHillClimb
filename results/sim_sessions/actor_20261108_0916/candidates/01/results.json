@@ -1,0 +1,41 @@
+[
+  {
+    "split": "dev",
+    "index": 0,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (6.2 cm off, -0.0 cm up); program raised: IndexError: list index out of range",
+    "status": "raised",
+    "duration_s": 0.0029896699998062104,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/01/trials/dev-00/trace.jsonl",
+    "start_ts": 1794158209.8486764,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 1,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (12.0 cm off, -0.0 cm up); program raised: IndexError: list index out of range",
+    "status": "raised",
+    "duration_s": 0.003322639997350052,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/01/trials/dev-01/trace.jsonl",
+    "start_ts": 1794158219.8787854,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 2,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (6.9 cm off, -0.0 cm up); program raised: IndexError: list index out of range",
+    "status": "raised",
+    "duration_s": 0.0030748159915674478,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/01/trials/dev-02/trace.jsonl",
+    "start_ts": 1794158229.9818556,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  }
+]

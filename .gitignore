@@ -11,3 +11,5 @@ videos/
 *.MOV
 *.mov
 *.mp4
+# the submission's result videos are tracked
+!results/videos/*.mp4

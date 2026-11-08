@@ -1,0 +1,1 @@
+lower hover to stay reachable; clear all cubes

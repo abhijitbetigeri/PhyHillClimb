@@ -1,0 +1,14 @@
+{
+ "job_id": "ftj_4253cf983c6723e4",
+ "dataset": "abhijitbetigeri29/phyhillclimb-right-arm-20261107",
+ "suffix_base": "right-arm",
+ "suffix": "right-arm-v1",
+ "steps": 1000,
+ "attempts": 1,
+ "model": "dream-1-ft:2d43713b-right-arm-v1",
+ "checked": true,
+ "history": [],
+ "check_model": "PROBLEM",
+ "warm_last": "DreamBadRequest: DreamAPI refused the inference request: DA-4000 BAD_REQUEST (malformed): unsafe instruction in this scene, refused: The frame is pitch black so no task object c",
+ "warm_ok_at": "2026-11-08 10:05:03"
+}

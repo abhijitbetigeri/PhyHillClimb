@@ -1,0 +1,41 @@
+[
+  {
+    "split": "dev",
+    "index": 0,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (5.5 cm off, -0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_linear: MoveResult(plan=PlanResult(FAILED, message='Cartesian planning failed: NO_SOLUTION: RoboPlan Cartesian planning failed: Could not resolve path fraction 0.541667: position error 0.006643 m, orientation error 0.000964 rad exceed the path tolerance. The path may leave the reachable workspace or pass through a singularity.'), execution=None, delta=(0.0, 0.0, 0.12), collision_check=False)",
+    "status": "raised",
+    "duration_s": 34.004910758987535,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/03/trials/dev-00/trace.jsonl",
+    "start_ts": 1794158574.3007793,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 1,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (8.9 cm off, -0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_linear: MoveResult(plan=PlanResult(FAILED, message='Cartesian planning failed: NO_SOLUTION: RoboPlan Cartesian planning failed: Could not resolve path fraction 0.416667: position error 0.006101 m, orientation error 0.000895 rad exceed the path tolerance. The path may leave the reachable workspace or pass through a singularity.'), execution=None, delta=(0.0, 0.0, 0.12), collision_check=False)",
+    "status": "raised",
+    "duration_s": 36.919372114993166,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/03/trials/dev-01/trace.jsonl",
+    "start_ts": 1794158620.2157066,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 2,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (7.0 cm off, -0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_linear: MoveResult(plan=PlanResult(FAILED, message='Cartesian planning failed: NO_SOLUTION: RoboPlan Cartesian planning failed: Could not resolve path fraction 0.687500: position error 0.005364 m, orientation error 0.000787 rad exceed the path tolerance. The path may leave the reachable workspace or pass through a singularity.'), execution=None, delta=(0.0, 0.0, 0.12), collision_check=False)",
+    "status": "raised",
+    "duration_s": 37.93962516202009,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/03/trials/dev-02/trace.jsonl",
+    "start_ts": 1794158668.8072555,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  }
+]

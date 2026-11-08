@@ -1,5 +1,11 @@
 # relay: the LiveKit room as the hardware abstraction
 
+## Presentation demo (no hardware)
+
+Run `.venv/bin/python -m relay.demo --open` from the project root. It starts an isolated local
+LiveKit server and dashboard, broadcasts recorded cable/tower simulations through the publish-only bridge,
+and loops a clearly labeled scripted status preview. See [DEMO.md](DEMO.md) for prerequisites and the talk track.
+
 `portal.yaml` is the wire schema (from livekit-examples/portal-makermods, minus the `screencast` flag
 that Portal 0.2.3 on PyPI does not know): three H.264 camera tracks and a 14-value state and action
 (`left_joint1..6.pos`, `left_gripper.pos`, `right_...`; radians and mm).

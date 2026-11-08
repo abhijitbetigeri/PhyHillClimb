@@ -1,0 +1,13 @@
+{
+  "task": "Unplug all the cables from the cable set.",
+  "budget": {
+    "iterations": 5,
+    "candidates_per_round": 3,
+    "dev_trials": 5,
+    "heldout_trials": 10,
+    "threshold": 0.8
+  },
+  "model": "claude-sonnet-4-5",
+  "status": "scored",
+  "heldout_rate": 1.0
+}

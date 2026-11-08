@@ -185,3 +185,17 @@ Chrome, Safari and the Python subscribers all decode.
 - dimos (Dimensional): https://github.com/dimensionalOS/dimos
 - Maker Arm SDK: https://github.com/makermods-robotics/maker-arm-sdk
 - LiveKit Portal example: https://github.com/livekit-examples/portal-makermods
+
+## Sunday: real-arm results, station tooling, HF Jobs
+
+- **Real arm:** `tools/station/` is the code that ran on the station (NUCK-4) during the event, copied back verbatim:
+  the Dream runner with the grasp-and-pull assist (`dream_right_arm_run_stack.py`, the multi-cable `working_set_unplug_8of8/`
+  copy that scored 8 of 8, `relay.sh` for unplug-then-stack in one command, the fine-tune cron monitor, keep-warm and
+  demo-replay tools). `tools/station/RUN_DREAM.md` is the operator guide.
+- **Results:** `results/README.md` has the tables (8/8 single plugs, 3/4 in one run, the judged run), the five Dream
+  fine-tunes, the dimos sim scores, 1080p videos in `results/videos/`, scored sim sessions in `results/sim_sessions/`
+  and every station run log in `results/station_runs/`.
+- **HF Jobs:** `hfjobs/` runs the dimos simulation lab and the renders on Hugging Face Jobs machines (`launch.sh`,
+  `remote.sh`, `restart_lab.sh`, `driver.py`, `make_video.sh`, `setup_actor.sh` + `actor_rpc.py` for Dimensional's actor).
+- **Real-arm path for the sim programs:** `real/` (measured-scene module, real-arm stack, runbook), verified on a mock arm
+  and in MuJoCo; not run on the hardware.

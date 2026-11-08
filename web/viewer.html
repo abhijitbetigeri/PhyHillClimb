@@ -45,6 +45,7 @@
   <input id="token" placeholder="viewer token">
   <button type="submit">Connect</button>
 </form>
+<p id="demo-notice" hidden style="padding:12px;border:1px solid var(--warn);color:var(--warn)">RECORDED SIMULATION · Scripted stage/score preview · Joint values are placeholders · No live policy or motor control</p>
 <section id="status">
   <div class="tile"><div class="k">Phase</div><div class="v" id="s-phase">–</div></div>
   <div class="tile"><div class="k">Stage</div><div class="v" id="s-stage">–</div></div>
@@ -60,15 +61,14 @@
   <div class="row"><span class="k">Video tracks subscribed</span><span id="lk-tracks">0</span></div>
   <div class="row"><span class="k">Status via RPC from</span><span id="lk-source">–</span></div>
   <div class="row"><span class="k">Arm runner</span><span id="lk-runner">–</span></div>
-  <p>The station publishes its three cameras as VP8 tracks and the 14 joint values as a data stream through
-  <b>LiveKit Portal</b> (identity <code>robot</code>). The <b>Relay Director</b> joins as a Portal operator, claims
-  control, reads synchronized observations and sends actions; this page and every teammate's phone join as
-  observers and call the <code>status</code> RPC once a second for the score, the clock and the "call stop" advice.
-  One room, one wire format, for the fake robot, the simulator and the real Metal arms.</p>
+  <p><b>LiveKit Portal</b> carries video and robot state in one room. This page subscribes to the camera tracks
+  and calls the <code>status</code> RPC once a second. The station bridge and presentation demo are publish-only:
+  they ignore control actions. In the presentation demo, stages, points and joint values are scripted placeholders;
+  the video is a recording of MuJoCo simulation. A separate Director process is used for policy control.</p>
 </section>
 <div id="log"></div>
 
-<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.js"></script>
+<script src="vendor/livekit-client-2.9.9.umd.js"></script>
 <script>
 (() => {
   const $ = (id) => document.getElementById(id);
@@ -108,6 +108,7 @@
     try {
       const text = await room.localParticipant.performRpc({ destinationIdentity: source, method: "status", payload: "" });
       const s = JSON.parse(text);
+      $("demo-notice").hidden = s.runner?.mode !== "demo-replay";
       $("s-phase").textContent = s.phase; $("s-stage").textContent = s.stage || "–";
       $("s-points").textContent = s.points; $("s-clock").textContent = s.clock_left_s + " s";
       $("s-proj").textContent = s.projected_if_stop_now;

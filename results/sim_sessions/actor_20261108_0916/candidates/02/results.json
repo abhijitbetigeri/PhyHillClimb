@@ -1,0 +1,41 @@
+[
+  {
+    "split": "dev",
+    "index": 0,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (14.0 cm off, -0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_pose: PlanResult(FAILED, message='IK failed: NO_SOLUTION: Pink IK did not converge within the iteration budget')",
+    "status": "raised",
+    "duration_s": 29.46098576299846,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/02/trials/dev-00/trace.jsonl",
+    "start_ts": 1794158460.162736,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 1,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (13.8 cm off, -0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_pose: PlanResult(FAILED, message='IK failed: NO_SOLUTION: Pink IK did not converge within the iteration budget')",
+    "status": "raised",
+    "duration_s": 29.78012946600211,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/02/trials/dev-01/trace.jsonl",
+    "start_ts": 1794158499.5928657,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  },
+  {
+    "split": "dev",
+    "index": 2,
+    "success": false,
+    "stage": "place",
+    "note": "cube_red is not centred one cube above cube_yellow (6.8 cm off, 0.0 cm up); program raised: dimos.autoresearch.program.RobotCallError: move_pose: PlanResult(FAILED, message='IK failed: JOINT_LIMITS: Pink IK candidate violates DimOS joint limits')",
+    "status": "raised",
+    "duration_s": 27.043857715005288,
+    "trace": "/work/dimos/recordings/autoresearch_three_cube_20261108_171518/candidates/02/trials/dev-02/trace.jsonl",
+    "start_ts": 1794158539.6690798,
+    "episode": null,
+    "backend": "dimos.autoresearch.live:backend"
+  }
+]

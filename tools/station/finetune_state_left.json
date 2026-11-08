@@ -1,0 +1,13 @@
+{
+ "job_id": "ftj_c21d5d2f719be9e1",
+ "history": [],
+ "dataset": "abhijitbetigeri29/phyhillclimb-left-arm-20261107",
+ "suffix": "left-arm-v1",
+ "suffix_base": "left-arm",
+ "steps": 1000,
+ "attempts": 1,
+ "model": "dream-1-ft:2d43713b-left-arm-v1",
+ "checked": true,
+ "check_model": "PROBLEM",
+ "warm_last": "DreamObservationError: observation is missing keys declared by the configured embodiment: ['video.wrist_l']"
+}

@@ -20,4 +20,11 @@ for i in $(seq 1 "$STACKS"); do
       --task "Using the right arm, stack one block on top of another block." || { echo "stack run $i ended with an error; stopping"; exit 1; }
   sleep 3
 done
+STICKS=${5:-0}   # sticks to insert into the top cube after the tower (model only, RTC playback)
+for i in $(seq 1 "$STICKS"); do
+  echo "=============== STAGE 3: stick $i of $STICKS ($(date +%H:%M:%S)) ==============="
+  ~/dream-env/bin/python "$T/dream_right_arm_run_stack.py" --checkpoint "$CK" --live --seconds "$SS" --no-assist-pull \
+      --task "Using the right arm, insert the stick into a hole." || { echo "stick run $i ended with an error; stopping"; exit 1; }
+  sleep 3
+done
 echo "relay done at $(date +%H:%M:%S)"

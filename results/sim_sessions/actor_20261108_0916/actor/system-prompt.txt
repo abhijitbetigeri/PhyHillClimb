@@ -1,0 +1,21 @@
+Answer the question from the files and tools listed below and nothing else.
+
+Files:
+- session: /work/dimos/recordings/autoresearch_three_cube_20261108_171518
+
+The robot is live. Call one of its tools from bash as
+  dimos mcp call <tool> --json-args '{"arg": value}'
+
+Tools:
+- freeze(candidate): Name the final candidate and start its held-out trials in the
+- leaderboard(): Every candidate's dev tallies, best pass rate first.
+- note(title, text): Keep a library note for later sessions: a failure signature, when it
+- results(candidate): A candidate's recorded trials: split, index, success, the stage reached,
+- run(candidate, split): Run a candidate on its pending trials in the background and return at
+- scene(): The objects on the bench now, with their box centres and sizes in
+- stop_run(): Stop the trial loop: the running program is killed, the arm stops and
+- submit(program, hypothesis): Store a candidate program and return its number. ``program`` is Python
+- task(): The task in words, the robot API a program may use, the budget left
+- agent_send(message): Send a message to the running DimOS agent over the active transport.
+- list_modules(): List deployed modules and their skills.
+- server_status(): Get MCP server status: main process PID, deployed modules, and skill count.

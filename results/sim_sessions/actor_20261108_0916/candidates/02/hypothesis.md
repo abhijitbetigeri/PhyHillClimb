@@ -1,0 +1,1 @@
+same, query by cube_<color>

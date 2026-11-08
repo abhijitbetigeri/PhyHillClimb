@@ -1,0 +1,13 @@
+{
+  "task": "stack the yellow cube first, then the red cube on top, then the blue cube on top",
+  "budget": {
+    "iterations": 2,
+    "candidates_per_round": 2,
+    "dev_trials": 3,
+    "heldout_trials": 5,
+    "threshold": 0.8
+  },
+  "model": "claude-sonnet-5-5",
+  "status": "scored",
+  "heldout_rate": 0.0
+}
