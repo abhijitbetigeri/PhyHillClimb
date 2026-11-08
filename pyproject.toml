@@ -1,0 +1,21 @@
+[build-system]
+requires = ["hatchling>=1.25"]
+build-backend = "hatchling.build"
+
+[project]
+name = "phyhillclimb"
+version = "0.1.0"
+description = "PhyHillClimb: Hill Climb relay director, LiveKit relay room, Dream-1 skill and the stacking lab for dimos"
+requires-python = ">=3.12"
+# No dependencies on purpose: the relay and harness use requirements.txt in this repo's venv, and the sim lab is
+# installed editable into the dimos checkout's venv, which already has everything it needs.
+dependencies = []
+
+# `dimos --simulation run phyhillclimb.autoresearch-stack` once installed into the dimos venv:
+#   uv pip install --python ~/projects/dimos/.venv/bin/python -e ~/projects/PhyHillClimb
+[project.entry-points."dimos.blueprints"]
+autoresearch-stack = "sim.lab_stack:lab"
+autoresearch-three-cube = "sim.lab_stack:three_cube_lab"
+
+[tool.hatch.build.targets.wheel]
+packages = ["sim", "relay", "harness"]

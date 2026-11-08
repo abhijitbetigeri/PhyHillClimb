@@ -1,0 +1,7 @@
+dreamlabs==1.0.37
+dreamlabs-client==1.1.3
+numpy
+pillow
+livekit-portal
+livekit-agents
+python-dotenv

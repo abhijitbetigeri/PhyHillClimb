@@ -1,0 +1,13 @@
+.venv/
+runs/
+runs_check.log
+__pycache__/
+.env
+notes/
+*.swp
+*.swo
+.env.local
+videos/
+*.MOV
+*.mov
+*.mp4

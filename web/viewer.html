@@ -1,0 +1,116 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Relay Room Viewer</title>
+<style>
+  :root { --bg: #0e1116; --fg: #e8ecf1; --muted: #8a94a3; --line: #263040; --ok: #3ddc84; --warn: #ffb020; --bad: #ff5c5c; --accent: #5aa9ff; }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--fg); font: 14px/1.45 -apple-system, "Segoe UI", Roboto, sans-serif; padding: 12px max(16px, env(safe-area-inset-left)) 24px max(16px, env(safe-area-inset-right)); }
+  header { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: baseline; margin-bottom: 12px; }
+  h1 { font-size: 18px; margin: 0; }
+  #conn { color: var(--muted); font-variant-numeric: tabular-nums; }
+  #status { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 8px; margin-bottom: 12px; }
+  .tile { border: 1px solid var(--line); border-radius: 6px; padding: 8px 10px; }
+  .tile .k { color: var(--muted); font-size: 11px; letter-spacing: .04em; text-transform: uppercase; }
+  .tile .v { font-size: 20px; font-variant-numeric: tabular-nums; }
+  .tile.big { grid-column: 1 / -1; }
+  .tile.big .v { font-size: 26px; }
+  .advice-stop { color: var(--ok); }
+  #videos { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 10px; }
+  .cam { position: relative; background: #000; border-radius: 6px; overflow: hidden; aspect-ratio: 16 / 9; }
+  .cam video { width: 100%; height: 100%; object-fit: contain; display: block; }
+  .cam .name { position: absolute; left: 8px; bottom: 6px; background: rgba(0,0,0,.6); padding: 2px 6px; border-radius: 4px; font-size: 12px; }
+  #log { color: var(--muted); font-size: 12px; white-space: pre-wrap; margin-top: 12px; }
+  form[hidden] { display: none; }
+  form { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 12px; }
+  input { flex: 1 1 240px; background: #161b23; color: var(--fg); border: 1px solid var(--line); border-radius: 6px; padding: 8px; }
+  button { background: var(--accent); color: #06111f; border: 0; border-radius: 6px; padding: 8px 14px; font-weight: 600; }
+</style>
+</head>
+<body>
+<header>
+  <h1>Relay Room Viewer</h1>
+  <span id="conn">not connected</span>
+</header>
+<form id="join" hidden>
+  <input id="url" placeholder="wss://your-project.livekit.cloud">
+  <input id="token" placeholder="viewer token">
+  <button type="submit">Connect</button>
+</form>
+<section id="status">
+  <div class="tile"><div class="k">Phase</div><div class="v" id="s-phase">–</div></div>
+  <div class="tile"><div class="k">Stage</div><div class="v" id="s-stage">–</div></div>
+  <div class="tile"><div class="k">Points</div><div class="v" id="s-points">–</div></div>
+  <div class="tile"><div class="k">Clock left</div><div class="v" id="s-clock">–</div></div>
+  <div class="tile"><div class="k">If stopped now</div><div class="v" id="s-proj">–</div></div>
+  <div class="tile big"><div class="k">Director advice</div><div class="v" id="s-advice">waiting for the director</div></div>
+</section>
+<section id="videos"></section>
+<div id="log"></div>
+
+<script src="https://cdn.jsdelivr.net/npm/livekit-client@2.9.9/dist/livekit-client.umd.js"></script>
+<script>
+(() => {
+  const $ = (id) => document.getElementById(id);
+  const log = (m) => { $("log").textContent = (new Date().toLocaleTimeString() + "  " + m + "\n" + $("log").textContent).slice(0, 4000); };
+  const params = new URLSearchParams(location.hash.slice(1));
+  let url = params.get("url") || "", token = params.get("token") || "";
+  if (!url || !token) { $("join").hidden = false; }
+  $("join").addEventListener("submit", (e) => { e.preventDefault(); url = $("url").value.trim(); token = $("token").value.trim(); connect(); });
+
+  const videos = new Map();
+  function addVideo(track, pub, participant) {
+    const name = pub.trackName || pub.trackSid;
+    let box = videos.get(name);
+    if (!box) {
+      box = document.createElement("div"); box.className = "cam";
+      const v = track.attach(); v.autoplay = true; v.playsInline = true; v.muted = true;
+      const tag = document.createElement("div"); tag.className = "name"; tag.textContent = participant.identity + " · " + name;
+      box.append(v, tag); $("videos").append(box); videos.set(name, box);
+      v.play().catch((e) => log("play blocked for " + name + ": " + e.message));
+      setTimeout(() => log(name + " decoding " + v.videoWidth + "x" + v.videoHeight + (v.paused ? " (paused)" : "")), 3000);
+    } else { track.attach(box.querySelector("video")); }
+    log("video " + name + " from " + participant.identity);
+  }
+  function removeVideo(pub) {
+    const name = pub.trackName || pub.trackSid; const box = videos.get(name);
+    if (box) { box.remove(); videos.delete(name); }
+  }
+
+  async function pollStatus(room) {
+    const director = [...room.remoteParticipants.values()].find((p) => p.identity === "director");
+    if (!director) { $("s-advice").textContent = "no director in the room"; return; }
+    try {
+      const text = await room.localParticipant.performRpc({ destinationIdentity: "director", method: "status", payload: "" });
+      const s = JSON.parse(text);
+      $("s-phase").textContent = s.phase; $("s-stage").textContent = s.stage || "–";
+      $("s-points").textContent = s.points; $("s-clock").textContent = s.clock_left_s + " s";
+      $("s-proj").textContent = s.projected_if_stop_now;
+      const adv = $("s-advice"); adv.textContent = s.advice || ("verdict: " + (s.last_verdict || "–"));
+      adv.className = "v" + (/CALL STOP/.test(s.advice || "") ? " advice-stop" : "");
+    } catch (e) { $("s-advice").textContent = "status RPC failed: " + e.message; }
+  }
+
+  async function connect() {
+    const LK = window.LivekitClient;
+    const room = new LK.Room({ adaptiveStream: false, dynacast: false });
+    room.on(LK.RoomEvent.TrackSubscribed, (track, pub, participant) => { if (track.kind === "video") addVideo(track, pub, participant); });
+    room.on(LK.RoomEvent.TrackUnsubscribed, (track, pub) => removeVideo(pub));
+    room.on(LK.RoomEvent.ParticipantConnected, (p) => log("joined: " + p.identity));
+    room.on(LK.RoomEvent.ParticipantDisconnected, (p) => log("left: " + p.identity));
+    room.on(LK.RoomEvent.Disconnected, () => { $("conn").textContent = "disconnected"; });
+    try {
+      await room.connect(url, token);
+      $("conn").textContent = "connected to " + room.name + " as " + room.localParticipant.identity;
+      $("join").hidden = true;
+      log("connected; participants: " + [...room.remoteParticipants.keys()].join(", "));
+      setInterval(() => pollStatus(room), 1000);
+    } catch (e) { $("conn").textContent = "connect failed: " + e.message; $("join").hidden = false; log(e.stack || e.message); }
+  }
+  if (url && token) connect();
+})();
+</script>
+</body>
+</html>
