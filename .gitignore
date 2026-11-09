@@ -7,7 +7,7 @@ notes/
 *.swp
 *.swo
 .env.local
-videos/
+/videos/
 *.MOV
 *.mov
 *.mp4
